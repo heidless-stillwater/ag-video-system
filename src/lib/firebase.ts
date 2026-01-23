@@ -6,7 +6,7 @@ import { getStorage, FirebaseStorage, connectStorageEmulator } from 'firebase/st
 import { getFunctions, Functions, connectFunctionsEmulator } from 'firebase/functions';
 import { getConfig } from './config/environment';
 
-// Firebase configuration - replace with your project config
+// Firebase configuration
 const firebaseConfig = {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
     authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -16,49 +16,26 @@ const firebaseConfig = {
     appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase (singleton pattern)
-let app: FirebaseApp;
-let auth: Auth;
-let db: Firestore;
-let storage: FirebaseStorage;
-let functions: Functions;
+// Initialize Firebase as singletons
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const auth = getAuth(app);
+const db = getFirestore(app, 'autovideo-db-0');
+const storage = getStorage(app);
+const functions = getFunctions(app);
 
-function initializeFirebase() {
-    if (getApps().length === 0) {
-        app = initializeApp(firebaseConfig);
-    } else {
-        app = getApps()[0];
+// Connect to emulators in DEV mode
+const config = getConfig();
+if (config.firebase.useEmulators && typeof window !== 'undefined') {
+    try {
+        // Connect only if not already connected (prevents error on hot reload)
+        connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+        connectFirestoreEmulator(db, 'localhost', 8080);
+        connectStorageEmulator(storage, 'localhost', 9199);
+        connectFunctionsEmulator(functions, 'localhost', 5001);
+        console.log('🔧 Connected to Firebase emulators');
+    } catch (error) {
+        console.log('Emulators already connected or not available');
     }
-
-    auth = getAuth(app);
-    db = getFirestore(app);
-    storage = getStorage(app);
-    functions = getFunctions(app);
-
-    // Connect to emulators in DEV mode
-    const config = getConfig();
-    if (config.firebase.useEmulators && typeof window !== 'undefined') {
-        try {
-            connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
-            connectFirestoreEmulator(db, 'localhost', 8080);
-            connectStorageEmulator(storage, 'localhost', 9199);
-            connectFunctionsEmulator(functions, 'localhost', 5001);
-            console.log('🔧 Connected to Firebase emulators');
-        } catch (error) {
-            // Emulators might already be connected
-            console.log('Emulators already connected or not available');
-        }
-    }
-
-    return { app, auth, db, storage, functions };
-}
-
-// Export initialized services
-export function getFirebaseServices() {
-    if (!app) {
-        initializeFirebase();
-    }
-    return { app, auth, db, storage, functions };
 }
 
 // Collection names
@@ -72,5 +49,12 @@ export const COLLECTIONS = {
     ANALYTICS: 'analytics',
 } as const;
 
-// Export for direct imports
+// Export initialized services
 export { app, auth, db, storage, functions };
+
+/**
+ * Helper to get all services at once if needed
+ */
+export function getFirebaseServices() {
+    return { app, auth, db, storage, functions };
+}

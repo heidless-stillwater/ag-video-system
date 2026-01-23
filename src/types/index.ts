@@ -122,6 +122,8 @@ export interface ScriptSection {
     order: number;
     wordCount: number;
     estimatedDuration: number; // in seconds
+    audioUrl?: string;
+    audioStatus?: 'pending' | 'generating' | 'ready' | 'failed';
     notes?: string;
     visualCues?: VisualCue[];
 }

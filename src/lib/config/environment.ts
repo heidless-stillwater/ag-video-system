@@ -29,7 +29,7 @@ export interface EnvironmentConfig {
 const configs: Record<EnvironmentMode, EnvironmentConfig> = {
     DEV: {
         mode: 'DEV',
-        firebase: { useEmulators: true },
+        firebase: { useEmulators: false },
         ai: { model: 'mock', maxTokens: 1000 },
         tts: { voiceType: 'browser', speakingRate: 0.85 },
         video: { enabled: false, maxDurationMinutes: 5, resolution: '720p' },

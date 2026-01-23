@@ -1,27 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { AuthButton } from '@/components/auth/AuthButton';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { projectService } from '@/lib/services/firestore';
+import { Project } from '@/types';
 
 type EnvironmentMode = 'DEV' | 'STAGING' | 'PRODUCTION';
-
-// Mock data for initial development
-const mockProjects = [
-  {
-    id: '1',
-    title: 'The Deep Ocean: Mysteries of the Abyss',
-    status: 'scripting',
-    estimatedDuration: 120,
-    updatedAt: new Date('2024-01-20'),
-  },
-  {
-    id: '2',
-    title: 'Ancient Civilizations: Lost Cities',
-    status: 'researching',
-    estimatedDuration: 150,
-    updatedAt: new Date('2024-01-19'),
-  },
-];
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-500',
@@ -35,9 +21,35 @@ const statusColors: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const { user, loading: authLoading } = useAuth();
   const [currentMode, setCurrentMode] = useState<EnvironmentMode>('DEV');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [budgetUsed] = useState(12.50); // Mock value
   const totalBudget = 300;
+
+  useEffect(() => {
+    async function loadProjects() {
+      if (!user) {
+        setProjects([]);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const userProjects = await projectService.getUserProjects(user.id);
+        setProjects(userProjects);
+      } catch (error) {
+        console.error('Error loading projects:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    if (!authLoading) {
+      loadProjects();
+    }
+  }, [user, authLoading]);
 
   const modeDescriptions: Record<EnvironmentMode, string> = {
     DEV: 'Local emulators, mock AI, zero cost',
@@ -75,17 +87,15 @@ export default function Dashboard() {
                     key={mode}
                     onClick={() => setCurrentMode(mode)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${currentMode === mode
-                        ? `${modeColors[mode]} text-white`
-                        : 'text-slate-400 hover:text-white'
+                      ? `${modeColors[mode]} text-white`
+                      : 'text-slate-400 hover:text-white'
                       }`}
                   >
                     {mode}
                   </button>
                 ))}
               </div>
-              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-sm font-semibold">
-                U
-              </div>
+              <AuthButton />
             </div>
           </div>
         </div>
@@ -148,8 +158,8 @@ export default function Dashboard() {
         {/* Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {[
-            { label: 'Projects', value: '2', icon: '📁' },
-            { label: 'Published', value: '0', icon: '🎥' },
+            { label: 'Projects', value: projects.length.toString(), icon: '📁' },
+            { label: 'Published', value: projects.filter(p => p.status === 'published').length.toString(), icon: '🎥' },
             { label: 'Total Views', value: '0', icon: '👁️' },
             { label: 'Watch Time', value: '0h', icon: '⏱️' },
           ].map((stat) => (
@@ -173,37 +183,59 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-3">
-            {mockProjects.map((project) => (
-              <Link
-                key={project.id}
-                href={`/projects/${project.id}`}
-                className="block p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-all group"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-slate-700 to-slate-600 flex items-center justify-center text-2xl">
-                      🎬
-                    </div>
-                    <div>
-                      <h3 className="font-medium text-white group-hover:text-indigo-300 transition-colors">
-                        {project.title}
-                      </h3>
-                      <div className="flex items-center gap-3 text-sm text-slate-400">
-                        <span className="flex items-center gap-1">
-                          <span className={`w-2 h-2 rounded-full ${statusColors[project.status]}`}></span>
-                          {project.status.replace('_', ' ')}
-                        </span>
-                        <span>•</span>
-                        <span>{project.estimatedDuration} min</span>
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center p-12 border border-slate-800 rounded-2xl bg-slate-900/50">
+                <div className="w-8 h-8 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+                <p className="text-slate-500">Loading your projects...</p>
+              </div>
+            ) : projects.length > 0 ? (
+              projects.map((project) => (
+                <Link
+                  key={project.id}
+                  href={`/projects/${project.id}`}
+                  className="block p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-all group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-slate-700 to-slate-600 flex items-center justify-center text-2xl">
+                        🎬
+                      </div>
+                      <div>
+                        <h3 className="font-medium text-white group-hover:text-indigo-300 transition-colors">
+                          {project.title}
+                        </h3>
+                        <div className="flex items-center gap-3 text-sm text-slate-400">
+                          <span className="flex items-center gap-1">
+                            <span className={`w-2 h-2 rounded-full ${statusColors[project.status]}`}></span>
+                            {project.status.replace('_', ' ')}
+                          </span>
+                          <span>•</span>
+                          <span>{project.estimatedDuration} min</span>
+                        </div>
                       </div>
                     </div>
+                    <div className="text-slate-500 text-sm" suppressHydrationWarning>
+                      {project.updatedAt.toLocaleDateString('en-GB', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric'
+                      })}
+                    </div>
                   </div>
-                  <div className="text-slate-500 text-sm">
-                    {project.updatedAt.toLocaleDateString()}
-                  </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-800 rounded-2xl bg-slate-900/10">
+                <div className="text-4xl mb-4 opacity-20">📁</div>
+                <p className="text-slate-500 mb-6">No projects yet. Start by researching a topic!</p>
+                <Link
+                  href="/topics"
+                  className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all"
+                >
+                  🔍 Research Topics
+                </Link>
+              </div>
+            )}
           </div>
         </div>
 
