@@ -129,10 +129,15 @@ export interface ScriptSection {
 }
 
 export interface VisualCue {
+    id: string;
     timestamp: number; // in seconds from section start
     type: 'image' | 'video' | 'transition';
     description: string;
+    url?: string;
+    status?: 'pending' | 'generating' | 'ready' | 'failed';
     generatedAssetId?: string;
+    transitionType?: 'fade' | 'blur' | 'zoom' | 'slide';
+    transitionDuration?: number; // in milliseconds
 }
 
 // ===== Media Asset Types =====

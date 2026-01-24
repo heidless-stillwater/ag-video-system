@@ -2,6 +2,7 @@ import {
     collection,
     addDoc,
     updateDoc,
+    deleteDoc,
     doc,
     getDoc,
     getDocs,
@@ -97,5 +98,10 @@ export const projectService = {
             ...updates,
             updatedAt: serverTimestamp(),
         });
+    },
+
+    async deleteProject(projectId: string): Promise<void> {
+        const docRef = doc(db, 'projects', projectId);
+        await deleteDoc(docRef);
     }
 };

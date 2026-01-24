@@ -1,0 +1,11 @@
+{
+    "hosting": {
+        "source": ".",
+        "site": "autovideo-v0-dev",
+        "ignore": [
+            "firebase.json",
+            "**/.*",
+            "**/node_modules/**"
+        ]
+    }
+}

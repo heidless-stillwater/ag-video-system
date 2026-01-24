@@ -4,12 +4,16 @@ import React, { useEffect, useState, use } from 'react';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { projectService } from '@/lib/services/firestore';
 import { scriptService } from '@/lib/services/script';
+import { videoEngine, Scene } from '@/lib/services/video-engine';
+import { VideoPreview } from '@/components/project/VideoPreview';
 import { Project, ProjectStatus, Script } from '@/types';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 
 export default function ProjectDetailPage() {
     const params = useParams();
+    const router = useRouter();
     const projectId = params.id as string;
     const [project, setProject] = useState<Project | null>(null);
     const [script, setScript] = useState<Script | null>(null);
@@ -17,6 +21,11 @@ export default function ProjectDetailPage() {
     const [isResearching, setIsResearching] = useState(false);
     const [isScripting, setIsScripting] = useState(false);
     const [generatingAudioId, setGeneratingAudioId] = useState<string | null>(null);
+    const [isGeneratingAllAudio, setIsGeneratingAllAudio] = useState(false);
+    const [isGeneratingMedia, setIsGeneratingMedia] = useState(false);
+    const [isAssembling, setIsAssembling] = useState(false);
+    const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+    const [timeline, setTimeline] = useState<Scene[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     const loadProjectAndScript = async () => {
@@ -133,6 +142,115 @@ export default function ProjectDetailPage() {
         }
     };
 
+    const handleGenerateAllAudio = async () => {
+        if (!project || !script) return;
+        setIsGeneratingAllAudio(true);
+        setError(null);
+
+        try {
+            // Find all sections that don't have audio yet
+            const pendingSections = script.sections.filter(s => !s.audioUrl);
+
+            for (const section of pendingSections) {
+                setGeneratingAudioId(section.id);
+                const response = await fetch(`/api/projects/${project.id}/tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scriptId: script.id,
+                        sectionId: section.id,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(`Failed on "${section.title}": ${data.error || 'Unknown error'}`);
+                }
+
+                // Refresh script data after each successful generation to update UI
+                await loadProjectAndScript();
+            }
+        } catch (err: any) {
+            setError('Batch audio failed: ' + err.message);
+        } finally {
+            setIsGeneratingAllAudio(false);
+            setGeneratingAudioId(null);
+        }
+    };
+
+    const handleGenerateMedia = async () => {
+        if (!project || !script) return;
+        setIsGeneratingMedia(true);
+        setError(null);
+
+        try {
+            const response = await fetch(`/api/projects/${project.id}/media`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scriptId: script.id }),
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Media generation failed');
+            }
+
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Media failed: ' + err.message);
+        } finally {
+            setIsGeneratingMedia(false);
+        }
+    };
+
+    const handleAssemble = async () => {
+        if (!project || !script) return;
+        setIsAssembling(true);
+        setError(null);
+
+        try {
+            const response = await fetch(`/api/projects/${project.id}/assemble`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scriptId: script.id }),
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Assembly failed');
+            }
+
+            // Calculate timeline and open preview
+            const calcedTimeline = videoEngine.calculateTimeline(script);
+            setTimeline(calcedTimeline);
+            setIsPreviewOpen(true);
+
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Assembly failed: ' + err.message);
+        } finally {
+            setIsAssembling(false);
+        }
+    };
+
+    const [deleteModal, setDeleteModal] = useState({ isOpen: false, loading: false });
+
+    const handleDeleteProject = () => {
+        setDeleteModal({ isOpen: true, loading: false });
+    };
+
+    const confirmDelete = async () => {
+        if (!project) return;
+        setDeleteModal({ isOpen: true, loading: true });
+        try {
+            await projectService.deleteProject(project.id);
+            router.push('/');
+        } catch (err: any) {
+            setError('Failed to delete project: ' + err.message);
+            setDeleteModal({ isOpen: false, loading: false });
+        }
+    };
+
     if (isLoading) {
         return (
             <ProtectedRoute>
@@ -189,6 +307,12 @@ export default function ProjectDetailPage() {
                             </div>
                         </div>
                         <div className="flex items-center gap-4">
+                            <button
+                                onClick={handleDeleteProject}
+                                className="px-4 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 rounded-lg text-sm font-medium transition-colors"
+                            >
+                                Delete Project
+                            </button>
                             <button className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">
                                 Settings
                             </button>
@@ -232,6 +356,8 @@ export default function ProjectDetailPage() {
                                 {project.status === 'draft' && "Your project is ready to begin. Start the research phase to gather facts and build your documentary outline."}
                                 {project.status === 'researching' && "Your research is complete. You can now generate a sleep-optimized script based on the extracted facts."}
                                 {project.status === 'scripting' && "Your script has been generated. Review and refine the sections before moving to media generation."}
+                                {project.status === 'generating_media' && "Visual assets have been synthesized. Review the gallery below before moving to final video assembly."}
+                                {project.status === 'assembling' && "The documentary is assembled. You can preview the finalized cinematic experience now."}
                             </p>
 
                             <div className="flex gap-4">
@@ -268,15 +394,69 @@ export default function ProjectDetailPage() {
                                         )}
                                     </button>
                                 )}
+
+                                {(project.status === 'scripting' || project.status === 'generating_media' || project.status === 'assembling') && script && (
+                                    <button
+                                        onClick={handleGenerateMedia}
+                                        disabled={isGeneratingMedia}
+                                        className="px-8 py-4 bg-slate-800 hover:bg-slate-700/80 rounded-2xl font-bold transition-all disabled:opacity-50 flex items-center gap-3 border border-slate-700"
+                                    >
+                                        {isGeneratingMedia ? (
+                                            <>
+                                                <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                                <span>Synthesizing Visual Assets...</span>
+                                            </>
+                                        ) : (
+                                            <span>{(project.status === 'generating_media' || project.status === 'assembling') ? '🔄 Regenerate Visual Assets' : '🖼️ Generate Visual Assets'}</span>
+                                        )}
+                                    </button>
+                                )}
+
+                                {(project.status === 'generating_media' || project.status === 'assembling') && script && (
+                                    <button
+                                        onClick={handleAssemble}
+                                        disabled={isAssembling}
+                                        className="px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 rounded-2xl font-bold shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 flex items-center gap-3"
+                                    >
+                                        {isAssembling ? (
+                                            <>
+                                                <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                                <span>Baking Documentary...</span>
+                                            </>
+                                        ) : (
+                                            <span>🎬 {project.status === 'assembling' ? 'Preview Documentary' : 'Assemble & Preview'}</span>
+                                        )}
+                                    </button>
+                                )}
                             </div>
                         </div>
 
-                        {/* Script Sections (Visible if status is scripting) */}
-                        {project.status === 'scripting' && script && (
+                        {/* Script Sections (Visible if status is scripting or generating_media) */}
+                        {(project.status === 'scripting' || project.status === 'generating_media' || project.status === 'assembling') && script && (
                             <div className="space-y-6">
-                                <h3 className="text-xl font-bold flex items-center gap-2">
-                                    <span className="text-purple-400">📝</span> Documentary Script Sections
-                                </h3>
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-xl font-bold flex items-center gap-2">
+                                        <span className="text-purple-400">📝</span> Documentary Script Sections
+                                    </h3>
+                                    {script.sections.some(s => !s.audioUrl) && (
+                                        <button
+                                            onClick={handleGenerateAllAudio}
+                                            disabled={isGeneratingAllAudio}
+                                            className="px-4 py-2 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 border border-purple-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            {isGeneratingAllAudio ? (
+                                                <>
+                                                    <span className="w-3 h-3 border-2 border-purple-400/20 border-t-purple-400 rounded-full animate-spin"></span>
+                                                    <span>Generating All...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span>🎙️ Generate All Audio</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
                                 <div className="space-y-4">
                                     {script.sections.map((section, idx) => (
                                         <div key={section.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-colors">
@@ -319,9 +499,45 @@ export default function ProjectDetailPage() {
                                                     </button>
                                                 )}
                                             </div>
-                                            <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap">
+                                            <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap mb-6">
                                                 {section.content}
                                             </p>
+
+                                            {/* Visual Cues Gallery */}
+                                            {section.visualCues && section.visualCues.length > 0 && (
+                                                <div className="space-y-4">
+                                                    <h5 className="text-[10px] font-bold text-teal-500 uppercase tracking-widest px-1">Visual Assets</h5>
+                                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                                        {section.visualCues.map((cue) => (
+                                                            <div key={cue.id} className="relative aspect-video rounded-xl overflow-hidden bg-slate-800 border border-slate-700 group/cue">
+                                                                {cue.url ? (
+                                                                    <>
+                                                                        <img
+                                                                            src={cue.url}
+                                                                            alt={cue.description}
+                                                                            className="w-full h-full object-cover transition-transform duration-500 group-hover/cue:scale-110"
+                                                                        />
+                                                                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-transparent opacity-0 group-hover/cue:opacity-100 transition-opacity p-3 flex flex-col justify-end">
+                                                                            <div className="flex items-center gap-1.5 mb-1">
+                                                                                <span className="text-[7px] font-bold uppercase tracking-widest px-1 py-0.5 bg-blue-500/30 text-blue-200 rounded border border-blue-500/20">
+                                                                                    {cue.transitionType || 'fade'}
+                                                                                </span>
+                                                                                <span className="text-[7px] text-slate-400">{cue.transitionDuration || 1200}ms</span>
+                                                                            </div>
+                                                                            <p className="text-[8px] text-slate-200 line-clamp-2 leading-tight">{cue.description}</p>
+                                                                        </div>
+                                                                    </>
+                                                                ) : (
+                                                                    <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center">
+                                                                        <div className={`w-2 h-2 rounded-full mb-2 ${cue.status === 'generating' ? 'bg-teal-500 animate-pulse' : 'bg-slate-600'}`}></div>
+                                                                        <p className="text-[8px] text-slate-500 font-medium leading-tight">{cue.description.substring(0, 30)}...</p>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -409,6 +625,27 @@ export default function ProjectDetailPage() {
                         </div>
                     </div>
                 </main>
+
+                {/* Cinematic Preview Overlay */}
+                {isPreviewOpen && timeline.length > 0 && (
+                    <VideoPreview
+                        scenes={timeline}
+                        onClose={() => setIsPreviewOpen(false)}
+                    />
+                )}
+
+                {project && (
+                    <ConfirmModal
+                        isOpen={deleteModal.isOpen}
+                        title="Delete Project"
+                        message={`Are you sure you want to delete "${project.title}"? This action is permanent and cannot be undone.`}
+                        confirmLabel="Delete Project"
+                        isDestructive={true}
+                        isLoading={deleteModal.loading}
+                        onConfirm={confirmDelete}
+                        onClose={() => setDeleteModal({ isOpen: false, loading: false })}
+                    />
+                )}
             </div>
         </ProtectedRoute>
     );

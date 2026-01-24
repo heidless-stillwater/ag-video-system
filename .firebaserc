@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "heidless-firebase-2"
+  },
+  "targets": {
+    "heidless-firebase-2": {
+      "hosting": {
+        "autovideo": [
+          "autovideo-v0-dev"
+        ]
+      }
+    }
+  }
+}

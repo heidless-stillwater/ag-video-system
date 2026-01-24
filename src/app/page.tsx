@@ -6,6 +6,7 @@ import { AuthButton } from '@/components/auth/AuthButton';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { projectService } from '@/lib/services/firestore';
 import { Project } from '@/types';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 
 type EnvironmentMode = 'DEV' | 'STAGING' | 'PRODUCTION';
 
@@ -25,8 +26,33 @@ export default function Dashboard() {
   const [currentMode, setCurrentMode] = useState<EnvironmentMode>('DEV');
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; projectId: string; title: string; loading: boolean }>({
+    isOpen: false,
+    projectId: '',
+    title: '',
+    loading: false
+  });
   const [budgetUsed] = useState(12.50); // Mock value
   const totalBudget = 300;
+
+  const handleDeleteClick = (e: React.MouseEvent, projectId: string, projectTitle: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDeleteModal({ isOpen: true, projectId, title: projectTitle, loading: false });
+  };
+
+  const confirmDelete = async () => {
+    setDeleteModal(prev => ({ ...prev, loading: true }));
+    try {
+      await projectService.deleteProject(deleteModal.projectId);
+      setProjects(prev => prev.filter(p => p.id !== deleteModal.projectId));
+      setDeleteModal({ isOpen: false, projectId: '', title: '', loading: false });
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      alert('Failed to delete project. Please try again.');
+      setDeleteModal(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   useEffect(() => {
     async function loadProjects() {
@@ -214,12 +240,23 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                    <div className="text-slate-500 text-sm" suppressHydrationWarning>
-                      {project.updatedAt.toLocaleDateString('en-GB', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric'
-                      })}
+                    <div className="flex items-center gap-4">
+                      <div className="text-slate-500 text-sm" suppressHydrationWarning>
+                        {project.updatedAt.toLocaleDateString('en-GB', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric'
+                        })}
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteClick(e, project.id, project.title)}
+                        className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        title="Delete project"
+                      >
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 </Link>
@@ -266,6 +303,17 @@ export default function Dashboard() {
           </div>
         </div>
       </main>
+
+      <ConfirmModal
+        isOpen={deleteModal.isOpen}
+        title="Delete Project"
+        message={`Are you sure you want to delete "${deleteModal.title}"? This action is permanent and cannot be undone.`}
+        confirmLabel="Delete Project"
+        isDestructive={true}
+        isLoading={deleteModal.loading}
+        onConfirm={confirmDelete}
+        onClose={() => setDeleteModal({ isOpen: false, projectId: '', title: '', loading: false })}
+      />
     </div>
   );
 }
