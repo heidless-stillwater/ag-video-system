@@ -1,7 +1,7 @@
 // Environment configuration for VideoSystem
 // Supports DEV, STAGING, and PRODUCTION modes for cost optimization
 
-export type EnvironmentMode = 'DEV' | 'STAGING' | 'PRODUCTION';
+export type EnvironmentMode = 'DEV' | 'STAGING' | 'STAGING_LIMITED' | 'PRODUCTION';
 
 export interface EnvironmentConfig {
     mode: EnvironmentMode;
@@ -9,8 +9,9 @@ export interface EnvironmentConfig {
         useEmulators: boolean;
     };
     ai: {
-        model: 'gemini-1.5-flash' | 'gemini-1.5-pro' | 'mock';
+        model: 'gemini-2.0-flash-001' | 'gemini-2.5-pro' | 'mock';
         maxTokens: number;
+        limitAI: boolean; // If true, generate only 1 visual cue per section instead of 4
     };
     tts: {
         voiceType: 'browser' | 'standard' | 'wavenet';
@@ -30,7 +31,7 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
     DEV: {
         mode: 'DEV',
         firebase: { useEmulators: false },
-        ai: { model: 'mock', maxTokens: 1000 },
+        ai: { model: 'mock', maxTokens: 1000, limitAI: false },
         tts: { voiceType: 'browser', speakingRate: 0.85 },
         video: { enabled: false, maxDurationMinutes: 5, resolution: '720p' },
         storage: { useLocalStorage: true },
@@ -38,7 +39,15 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
     STAGING: {
         mode: 'STAGING',
         firebase: { useEmulators: false },
-        ai: { model: 'gemini-1.5-flash', maxTokens: 8000 },
+        ai: { model: 'gemini-2.0-flash-001', maxTokens: 8000, limitAI: false },
+        tts: { voiceType: 'standard', speakingRate: 0.85 },
+        video: { enabled: true, maxDurationMinutes: 5, resolution: '720p' },
+        storage: { useLocalStorage: false },
+    },
+    STAGING_LIMITED: {
+        mode: 'STAGING_LIMITED',
+        firebase: { useEmulators: false },
+        ai: { model: 'gemini-2.0-flash-001', maxTokens: 8000, limitAI: true },
         tts: { voiceType: 'standard', speakingRate: 0.85 },
         video: { enabled: true, maxDurationMinutes: 5, resolution: '720p' },
         storage: { useLocalStorage: false },
@@ -46,7 +55,7 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
     PRODUCTION: {
         mode: 'PRODUCTION',
         firebase: { useEmulators: false },
-        ai: { model: 'gemini-1.5-pro', maxTokens: 32000 },
+        ai: { model: 'gemini-2.5-pro', maxTokens: 32000, limitAI: false },
         tts: { voiceType: 'wavenet', speakingRate: 0.85 },
         video: { enabled: true, maxDurationMinutes: 180, resolution: '1080p' },
         storage: { useLocalStorage: false },
@@ -54,11 +63,29 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
 };
 
 export function getEnvironmentMode(): EnvironmentMode {
-    const mode = process.env.NEXT_PUBLIC_ENV_MODE as EnvironmentMode;
-    return mode && configs[mode] ? mode : 'DEV';
+    // If we're on the server (node environment), we can try to get the cookie
+    // Note: This requires being in a request context (Server Component/Route)
+    if (typeof window === 'undefined') {
+        try {
+            // Dynamically import to avoid issues in non-next environments if any
+            const { cookies } = require('next/headers');
+            const cookieStore = cookies();
+            // Since cookies() is now async in Next 15, this might be tricky in a sync function
+            // For now, we'll stick to the explicit pass-through in API routes which is safer 
+            // but let's at least fix the env var check.
+        } catch (e) {
+            // Fail silently if not in Next context
+        }
+    }
+
+    const envMode = process.env.NEXT_PUBLIC_ENV_MODE as EnvironmentMode;
+    return envMode && configs[envMode] ? envMode : 'DEV';
 }
 
-export function getConfig(): EnvironmentConfig {
+export function getConfig(overrideMode?: EnvironmentMode): EnvironmentConfig {
+    if (overrideMode && configs[overrideMode]) {
+        return configs[overrideMode];
+    }
     return configs[getEnvironmentMode()];
 }
 
@@ -93,9 +120,9 @@ export function estimateCost(
     let videoCost = 0;
 
     // Script generation cost
-    if (config.ai.model === 'gemini-1.5-flash') {
+    if (config.ai.model === 'gemini-2.0-flash-001') {
         scriptCost = (scriptCharCount / 1000) * pricing.geminiFlash;
-    } else if (config.ai.model === 'gemini-1.5-pro') {
+    } else if (config.ai.model === 'gemini-2.5-pro') {
         scriptCost = (scriptCharCount / 1000) * pricing.geminiPro;
     }
 

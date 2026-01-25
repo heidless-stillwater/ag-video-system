@@ -7,8 +7,9 @@ import { useAuth } from '@/lib/auth/AuthContext';
 import { projectService } from '@/lib/services/firestore';
 import { Project } from '@/types';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-
-type EnvironmentMode = 'DEV' | 'STAGING' | 'PRODUCTION';
+import { useEnvironment } from '@/lib/hooks/useEnvironment';
+import { EnvironmentMode } from "@/lib/config/environment";
+import { useRouter } from 'next/navigation';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-500',
@@ -23,7 +24,8 @@ const statusColors: Record<string, string> = {
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
-  const [currentMode, setCurrentMode] = useState<EnvironmentMode>('DEV');
+  const router = useRouter();
+  const { mode: currentMode } = useEnvironment();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; projectId: string; title: string; loading: boolean }>({
@@ -54,6 +56,12 @@ export default function Dashboard() {
     }
   };
 
+  const setEnvMode = (newMode: EnvironmentMode) => {
+    document.cookie = `x-env-mode=${newMode}; path=/; max-age=31536000; SameSite=Lax`;
+    router.refresh();
+    window.location.reload();
+  };
+
   useEffect(() => {
     async function loadProjects() {
       if (!user) {
@@ -80,12 +88,14 @@ export default function Dashboard() {
   const modeDescriptions: Record<EnvironmentMode, string> = {
     DEV: 'Local emulators, mock AI, zero cost',
     STAGING: 'Real APIs, cheaper models (~$0.50/video)',
+    STAGING_LIMITED: 'Real AI, 1 image/scene, step confirmation',
     PRODUCTION: 'Full quality, WaveNet voices (~$25/video)',
   };
 
   const modeColors: Record<EnvironmentMode, string> = {
     DEV: 'bg-emerald-500',
     STAGING: 'bg-amber-500',
+    STAGING_LIMITED: 'bg-yellow-500',
     PRODUCTION: 'bg-rose-500',
   };
 
@@ -108,16 +118,16 @@ export default function Dashboard() {
             {/* Environment Mode Selector */}
             <div className="flex items-center gap-4">
               <div className="flex bg-slate-800 rounded-lg p-1">
-                {(['DEV', 'STAGING', 'PRODUCTION'] as EnvironmentMode[]).map((mode) => (
+                {(['DEV', 'STAGING', 'STAGING_LIMITED', 'PRODUCTION'] as EnvironmentMode[]).map((mode) => (
                   <button
                     key={mode}
-                    onClick={() => setCurrentMode(mode)}
+                    onClick={() => setEnvMode(mode)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${currentMode === mode
-                      ? `${modeColors[mode]} text-white`
-                      : 'text-slate-400 hover:text-white'
+                      ? `${modeColors[mode]} text-white shadow-lg`
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                       }`}
                   >
-                    {mode}
+                    {mode === 'STAGING_LIMITED' ? 'LIMIT AI' : mode}
                   </button>
                 ))}
               </div>
@@ -133,7 +143,11 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className={`w-3 h-3 rounded-full ${modeColors[currentMode]} animate-pulse`}></div>
-              <span className="text-white font-medium">{currentMode} Mode</span>
+              <span className="text-white font-medium">
+                {currentMode === 'STAGING_LIMITED' ? 'Staging (Limit AI)' :
+                  currentMode === 'STAGING' ? 'Staging (Real AI)' :
+                    `${currentMode} Mode`}
+              </span>
               <span className="text-slate-400 text-sm">• {modeDescriptions[currentMode]}</span>
             </div>
             {currentMode !== 'DEV' && (

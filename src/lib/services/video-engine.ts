@@ -64,6 +64,19 @@ export const videoEngine = {
                 // Sort cues by timestamp
                 const sortedCues = [...cues].sort((a, b) => a.timestamp - b.timestamp);
 
+                // Safety check: Detect and fix "millisecond" hallucinations (e.g. 8000 instead of 8)
+                for (let i = 0; i < sortedCues.length; i++) {
+                    if (sortedCues[i].timestamp > 100 && sortedCues[i].timestamp > sectionDuration * 1.5) {
+                        console.warn(`[VideoEngine] Detected likely millisecond timestamp (${sortedCues[i].timestamp}). Normalizing to seconds.`);
+                        sortedCues[i] = { ...sortedCues[i], timestamp: sortedCues[i].timestamp / 1000 };
+                    }
+                    // Final clamp: Cannot exceed sectionDuration
+                    if (sortedCues[i].timestamp > sectionDuration) {
+                        console.warn(`[VideoEngine] Clamping timestamp ${sortedCues[i].timestamp} to section end ${sectionDuration}`);
+                        sortedCues[i] = { ...sortedCues[i], timestamp: Math.max(0, sectionDuration - 0.1) };
+                    }
+                }
+
                 // Ensure there's a cue at timestamp 0 without adding an extra scene
                 if (sortedCues[0].timestamp > 0) {
                     console.log(`[VideoEngine] - Adjusting first cue for section ${section.id} from ${sortedCues[0].timestamp}s to 0s`);

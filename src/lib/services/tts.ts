@@ -1,5 +1,5 @@
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
-import { getConfig } from '../config/environment';
+import { getConfig, EnvironmentMode } from '../config/environment';
 
 let ttsClient: TextToSpeechClient | null = null;
 
@@ -23,9 +23,9 @@ function getTTSClient(): TextToSpeechClient {
  * Generates an MP3 audio buffer from text using Google Cloud Text-to-Speech.
  * Optimized for sleep documentaries (slow pacing, calming pitch).
  */
-export async function generateSpeech(text: string): Promise<Buffer> {
+export async function generateSpeech(text: string, envMode?: EnvironmentMode): Promise<Buffer> {
     const client = getTTSClient();
-    const config = getConfig();
+    const config = getConfig(envMode);
 
     // Use SSML to add pauses and control pacing more precisely
     // We split by paragraphs and add a 3-second break between them

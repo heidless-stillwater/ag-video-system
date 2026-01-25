@@ -13,7 +13,7 @@ import {
     Timestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Topic, Project } from '@/types';
+import { Topic, Project, User } from '@/types';
 
 export const topicService = {
     async createTopic(topicData: Omit<Topic, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
@@ -103,5 +103,60 @@ export const projectService = {
     async deleteProject(projectId: string): Promise<void> {
         const docRef = doc(db, 'projects', projectId);
         await deleteDoc(docRef);
+    }
+};
+
+export const userService = {
+    async getOrCreateUser(userData: Partial<User> & { id: string }): Promise<User> {
+        const docRef = doc(db, 'users', userData.id);
+        const snapshot = await getDoc(docRef);
+
+        if (snapshot.exists()) {
+            return {
+                id: snapshot.id,
+                ...snapshot.data(),
+                createdAt: (snapshot.data().createdAt as Timestamp)?.toDate(),
+            } as User;
+        }
+
+        const newUser: User = {
+            email: userData.email || '',
+            displayName: userData.displayName || 'User',
+            photoURL: userData.photoURL || '',
+            createdAt: new Date(),
+            settings: {
+                defaultMode: 'DEV',
+                notifications: true,
+                autoSave: true,
+                youtubeConnected: false,
+            },
+            ...userData,
+        };
+
+        await updateDoc(docRef, {
+            ...newUser,
+            createdAt: serverTimestamp(),
+        });
+
+        return newUser;
+    },
+
+    async getUser(userId: string): Promise<User | null> {
+        const docRef = doc(db, 'users', userId);
+        const snapshot = await getDoc(docRef);
+        if (!snapshot.exists()) return null;
+        return {
+            id: snapshot.id,
+            ...snapshot.data(),
+            createdAt: (snapshot.data().createdAt as Timestamp)?.toDate(),
+        } as User;
+    },
+
+    async updateUser(userId: string, updates: Partial<User>): Promise<void> {
+        const docRef = doc(db, 'users', userId);
+        await updateDoc(docRef, {
+            ...updates,
+            updatedAt: serverTimestamp(),
+        });
     }
 };

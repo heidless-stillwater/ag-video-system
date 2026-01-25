@@ -5,6 +5,8 @@ import { Scene } from '@/lib/services/video-engine';
 
 interface VideoPreviewProps {
     scenes: Scene[];
+    backgroundMusicUrl?: string;
+    backgroundMusicVolume?: number;
     onClose: () => void;
 }
 
@@ -12,13 +14,18 @@ interface VideoPreviewProps {
  * A cinematic, high-fidelity documentary previewer.
  * Supports customizable transitions: fade, blur, zoom, and slide.
  */
-export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) => {
+export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMusicUrl, backgroundMusicVolume, onClose }) => {
     const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [isLooping, setIsLooping] = useState(false);
     const [absoluteCurrentTime, setAbsoluteCurrentTime] = useState(0);
     const [pendingSeekOffset, setPendingSeekOffset] = useState<number | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const musicRef = useRef<HTMLAudioElement | null>(null);
+    const sfxRef = useRef<HTMLAudioElement | null>(null);
     const [error, setAudioError] = useState<string | null>(null);
+    const [isNarratorActuallyPlaying, setIsNarratorActuallyPlaying] = useState(false);
+    const [showOverlays, setShowOverlays] = useState(true);
 
     // Double Buffer State
     const [buffer, setBuffer] = useState<{
@@ -53,26 +60,28 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
 
     const currentScene = scenes[currentSceneIndex];
 
+    const sectionId = currentScene?.sectionId;
+
     // Handle Time Update
     useEffect(() => {
         if (!isPlaying || !audioRef.current) return;
 
         const handleTimeUpdate = (e: Event) => {
             const audio = e.target as HTMLAudioElement;
-            const sectionId = audio.getAttribute('data-section-id');
-            if (sectionId !== activeSectionIdRef.current) return;
+            const currentAudioSectionId = audio.getAttribute('data-section-id');
+            if (currentAudioSectionId !== activeSectionIdRef.current) return;
 
-            const absTime = (sectionTimeOffsets[sectionId] ?? 0) + audio.currentTime;
+            const absTime = (sectionTimeOffsets[currentAudioSectionId || ''] ?? 0) + audio.currentTime;
 
             setAbsoluteCurrentTime(absTime);
             absoluteCurrentTimeRef.current = absTime;
 
             let foundIdx = scenes.findIndex(s =>
-                s.sectionId === sectionId && absTime >= s.startTime && absTime < (s.startTime + s.duration)
+                s.sectionId === currentAudioSectionId && absTime >= s.startTime && absTime < (s.startTime + s.duration)
             );
 
             if (foundIdx === -1) {
-                const sectionScenes = scenes.filter(s => s.sectionId === sectionId);
+                const sectionScenes = scenes.filter(s => s.sectionId === currentAudioSectionId);
                 const lastInSec = sectionScenes[sectionScenes.length - 1];
                 if (lastInSec && absTime >= lastInSec.startTime) {
                     foundIdx = scenes.indexOf(lastInSec);
@@ -88,7 +97,27 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
         const audio = audioRef.current;
         audio.addEventListener('timeupdate', handleTimeUpdate);
         return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
-    }, [isPlaying, scenes, sectionTimeOffsets]);
+    }, [isPlaying, scenes, sectionTimeOffsets, sectionId]);
+
+    const restart = () => {
+        setCurrentSceneIndex(0);
+        currentSceneIndexRef.current = 0;
+        setAbsoluteCurrentTime(0);
+        absoluteCurrentTimeRef.current = 0;
+        setIsPlaying(true);
+
+        // Wait for the new audio element to mount
+        setTimeout(() => {
+            if (audioRef.current) {
+                audioRef.current.currentTime = 0;
+                audioRef.current.play().catch(console.error);
+            }
+            if (musicRef.current) {
+                musicRef.current.currentTime = 0;
+                musicRef.current.play().catch(console.error);
+            }
+        }, 50);
+    };
 
     const handleAudioEnded = () => {
         const nextIdx = scenes.findIndex((s, i) => i > currentSceneIndex && s.sectionId !== activeSectionIdRef.current);
@@ -103,8 +132,12 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
                 }, 50);
             }
         } else {
-            setIsPlaying(false);
-            setAbsoluteCurrentTime(totalDuration);
+            if (isLooping) {
+                restart();
+            } else {
+                setIsPlaying(false);
+                setAbsoluteCurrentTime(totalDuration);
+            }
         }
     };
 
@@ -127,6 +160,13 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
         }
 
         activeSectionIdRef.current = currentScene.sectionId;
+
+        // Transition SFX
+        if (isPlaying && sfxRef.current) {
+            sfxRef.current.currentTime = 0;
+            sfxRef.current.volume = 0.15; // Subtle
+            sfxRef.current.play().catch(() => { });
+        }
     }, [currentSceneIndex, currentScene?.id]);
 
     const handleImageLoad = () => {
@@ -141,8 +181,13 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
     // Transport
     const togglePlayback = () => {
         if (!audioRef.current) return;
-        if (isPlaying) audioRef.current.pause();
-        else audioRef.current.play().catch(() => setAudioError('Playback blocked. Tap to resume.'));
+        if (isPlaying) {
+            audioRef.current.pause();
+            musicRef.current?.pause();
+        } else {
+            audioRef.current.play().catch(() => setAudioError('Playback blocked. Tap to resume.'));
+            musicRef.current?.play().catch(console.error);
+        }
         setIsPlaying(!isPlaying);
     };
 
@@ -255,20 +300,22 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent z-40 pointer-events-none"></div>
 
-                <div className="absolute bottom-12 inset-x-0 text-center px-12 z-50 pointer-events-none">
-                    <p className="text-2xl font-semibold text-white/95 drop-shadow-2xl italic leading-relaxed tracking-wide">
-                        {currentScene?.sectionTitle}
-                    </p>
-                    <div className="flex items-center justify-center gap-3 mt-4">
-                        <p className="text-[10px] text-white/40 tracking-[0.4em] uppercase font-black">
-                            {currentScene?.cueDescription}
+                {showOverlays && (
+                    <div className="absolute bottom-12 inset-x-0 text-center px-12 z-50 pointer-events-none transition-opacity duration-300">
+                        <p className="text-2xl font-semibold text-white/95 drop-shadow-2xl italic leading-relaxed tracking-wide">
+                            {currentScene?.sectionTitle}
                         </p>
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></span>
-                        <p className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded border border-blue-500/20">
-                            Transition: {currentScene?.transitionType || 'MISSING (fade)'} ({currentScene?.transitionDuration || 1000}ms)
-                        </p>
+                        <div className="flex items-center justify-center gap-3 mt-4">
+                            <p className="text-[10px] text-white/40 tracking-[0.4em] uppercase font-black">
+                                {currentScene?.cueDescription}
+                            </p>
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></span>
+                            <p className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded border border-blue-500/20">
+                                Transition: {currentScene?.transitionType || 'MISSING (fade)'} ({currentScene?.transitionDuration || 1000}ms)
+                            </p>
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {!isPlaying && (
                     <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
@@ -294,15 +341,47 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
                     </div>
 
                     <div className="flex items-center gap-6">
+                        <button
+                            onClick={restart}
+                            className="text-white/40 hover:text-white transition-colors cursor-pointer"
+                            title="Rewind to Start"
+                        >
+                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                            </svg>
+                        </button>
+
                         <button onClick={() => seekTo(absoluteCurrentTime - 10)} className="text-white/40 hover:text-white transition-colors cursor-pointer"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" /></svg></button>
                         <button onClick={togglePlayback} className="w-14 h-14 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 transition-transform cursor-pointer">
                             {isPlaying ? <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg> : <svg className="w-6 h-6 translate-x-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
                         </button>
                         <button onClick={() => seekTo(absoluteCurrentTime + 10)} className="text-white/40 hover:text-white transition-colors cursor-pointer"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zm8 0a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z" /></svg></button>
+
+                        <button
+                            onClick={() => setIsLooping(!isLooping)}
+                            className={`transition-colors cursor-pointer ${isLooping ? 'text-blue-400' : 'text-white/40 hover:text-white'}`}
+                            title={isLooping ? "Loop On" : "Loop Off"}
+                        >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
                     </div>
 
-                    <div className="text-right min-w-[120px]">
-                        <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Scene {currentSceneIndex + 1} of {scenes.length}</span>
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={() => setShowOverlays(!showOverlays)}
+                            className={`p-2 rounded-lg transition-all ${showOverlays ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-white'}`}
+                            title={showOverlays ? "Hide Prompt Overlays" : "Show Prompt Overlays"}
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                        </button>
+                        <div className="text-right min-w-[120px]">
+                            <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Scene {currentSceneIndex + 1} of {scenes.length}</span>
+                        </div>
                     </div>
                 </div>
 
@@ -323,9 +402,80 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, onClose }) =
                 key={currentScene?.sectionId}
                 data-section-id={currentScene?.sectionId}
                 src={currentScene?.audioUrl}
-                onEnded={handleAudioEnded}
+                onPlay={() => setIsNarratorActuallyPlaying(true)}
+                onPause={() => setIsNarratorActuallyPlaying(false)}
+                onEnded={() => {
+                    setIsNarratorActuallyPlaying(false);
+                    handleAudioEnded();
+                }}
                 onError={() => setAudioError('Audio streaming failed.')}
+            />
+
+            {backgroundMusicUrl && (
+                <audio
+                    ref={musicRef}
+                    src={backgroundMusicUrl}
+                    loop
+                    onPlay={() => {
+                        console.log('[VideoPreview] Music playback started');
+                        if (musicRef.current) {
+                            musicRef.current.volume = isNarratorActuallyPlaying ?
+                                (backgroundMusicVolume || 0.2) * 0.3 :
+                                (backgroundMusicVolume || 0.2);
+                        }
+                    }}
+                    onError={(e) => {
+                        const target = e.target as HTMLAudioElement;
+                        console.error('[VideoPreview] Music playback error:', target.error);
+                        setAudioError(`Music track failed to load: ${target.error?.message || 'Unsupported source'}`);
+                    }}
+                />
+            )}
+
+            {/* Manual Ducking Control */}
+            <DuckingEffect
+                isNarratorPlaying={isNarratorActuallyPlaying}
+                musicRef={musicRef}
+                baseVolume={backgroundMusicVolume || 0.2}
+            />
+            {/* Transition SFX */}
+            <audio
+                ref={sfxRef}
+                src="https://cdn.pixabay.com/audio/2022/01/18/audio_823157fbe1.mp3" // Placeholder: "Short Calm Chime"
+                preload="auto"
             />
         </div>
     );
+};
+
+const DuckingEffect: React.FC<{
+    isNarratorPlaying: boolean;
+    musicRef: React.RefObject<HTMLAudioElement | null>;
+    baseVolume: number
+}> = ({ isNarratorPlaying, musicRef, baseVolume }) => {
+    useEffect(() => {
+        if (!musicRef.current) return;
+        const targetVolume = isNarratorPlaying ? baseVolume * 0.3 : baseVolume;
+
+        // Smoothed volume transition
+        const currentVolume = musicRef.current.volume;
+        const steps = 10;
+        const stepTime = 50;
+        const volumeDiff = targetVolume - currentVolume;
+
+        let currentStep = 0;
+        const interval = setInterval(() => {
+            if (currentStep >= steps || !musicRef.current) {
+                clearInterval(interval);
+                if (musicRef.current) musicRef.current.volume = targetVolume;
+                return;
+            }
+            musicRef.current.volume = currentVolume + (volumeDiff * (currentStep / steps));
+            currentStep++;
+        }, stepTime);
+
+        return () => clearInterval(interval);
+    }, [isNarratorPlaying, baseVolume, musicRef]);
+
+    return null;
 };

@@ -1,5 +1,5 @@
 import { dbAdmin } from '../firebase-admin';
-import { Topic, Project, Script } from '@/types';
+import { Topic, Project, Script, User } from '@/types';
 
 /**
  * Server-side Firestore service using Admin SDK.
@@ -68,6 +68,25 @@ export async function updateScript(scriptId: string, updates: Partial<Script>): 
     });
 }
 
+// Users
+export async function getUser(userId: string): Promise<User | null> {
+    const doc = await dbAdmin.collection('users').doc(userId).get();
+    if (!doc.exists) return null;
+    const data = doc.data()!;
+    return {
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt?.toDate(),
+    } as User;
+}
+
+export async function updateUser(userId: string, updates: Partial<User>): Promise<void> {
+    await dbAdmin.collection('users').doc(userId).update({
+        ...updates,
+        updatedAt: new Date(),
+    });
+}
+
 // Keep the object export for backward compatibility if needed, 
 // but encourage using named exports
 export const firestoreAdmin = {
@@ -77,4 +96,6 @@ export const firestoreAdmin = {
     saveScript,
     getScript,
     updateScript,
+    getUser,
+    updateUser,
 };

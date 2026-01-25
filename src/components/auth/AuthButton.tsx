@@ -12,6 +12,27 @@ export function AuthButton() {
         );
     }
 
+    const handleDisconnectYouTube = async () => {
+        if (!user) return;
+        if (!confirm('Are you sure you want to disconnect your YouTube channel?')) return;
+
+        try {
+            const response = await fetch('/api/auth/youtube/disconnect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uid: user.id })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to disconnect YouTube');
+            }
+            // User state will update automatically via AuthContext onSnapshot
+        } catch (error) {
+            console.error('Error disconnecting YouTube:', error);
+            alert('Failed to disconnect. Please try again.');
+        }
+    };
+
     if (user) {
         return (
             <div className="flex items-center gap-4">
@@ -24,8 +45,26 @@ export function AuthButton() {
                         />
                     )}
                     <div className="hidden md:block">
-                        <p className="text-sm font-medium text-white">{user.displayName}</p>
-                        <p className="text-xs text-gray-400 truncate max-w-[150px]">{user.email}</p>
+                        <p className="text-sm font-medium text-white line-clamp-1">{user.displayName}</p>
+                        {user.settings.youtubeConnected ? (
+                            <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1 text-red-500">
+                                    <span className="text-[10px]">📺</span>
+                                    <span className="text-[10px] font-bold uppercase tracking-tight max-w-[80px] truncate">
+                                        {user.youtubeChannelInfo?.title || 'Linked'}
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={handleDisconnectYouTube}
+                                    className="text-[10px] text-gray-500 hover:text-white transition-colors"
+                                    title="Disconnect YouTube"
+                                >
+                                    (Disconnect)
+                                </button>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-gray-400 truncate max-w-[150px]">{user.email}</p>
+                        )}
                     </div>
                 </div>
                 <button

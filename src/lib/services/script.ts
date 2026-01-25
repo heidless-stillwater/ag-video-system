@@ -50,5 +50,13 @@ export const scriptService = {
             createdAt: (data.createdAt as Timestamp)?.toDate(),
             updatedAt: (data.updatedAt as Timestamp)?.toDate(),
         } as Script;
+    },
+
+    async updateScript(scriptId: string, updates: Partial<Script>): Promise<void> {
+        const docRef = doc(db, 'scripts', scriptId);
+        await updateDoc(docRef, {
+            ...updates,
+            updatedAt: serverTimestamp(),
+        });
     }
 };

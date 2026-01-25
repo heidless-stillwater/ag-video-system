@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateSpeech } from '@/lib/services/tts';
 import { storageService } from '@/lib/services/storage';
 import { getScript, updateScript } from '@/lib/services/firestore-admin';
+import { cookies } from 'next/headers';
+import { EnvironmentMode } from '@/lib/config/environment';
 
 /**
  * API Route for generating audio for a specific script section.
@@ -31,8 +33,12 @@ export async function POST(
         }
 
         // 2. Generate Audio via Google Cloud TTS
+        const cookieStore = await cookies();
+        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        console.log(`[TTS API] Environment Mode detected: ${envMode || 'DEFAULT'}`);
+
         console.log(`[TTS API] Generating speech for section: ${section.title}`);
-        const audioBuffer = await generateSpeech(section.content);
+        const audioBuffer = await generateSpeech(section.content, envMode);
 
         // 3. Upload to Firebase Storage
         console.log(`[TTS API] Uploading audio to storage...`);

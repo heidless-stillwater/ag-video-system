@@ -8,12 +8,23 @@ export interface User {
     photoURL?: string;
     createdAt: Date;
     settings: UserSettings;
+    youtubeTokens?: {
+        accessToken: string;
+        refreshToken: string;
+        expiryDate: number;
+    };
+    youtubeChannelInfo?: {
+        id: string;
+        title: string;
+        thumbnailUrl: string;
+    };
 }
 
 export interface UserSettings {
     defaultMode: 'DEV' | 'STAGING' | 'PRODUCTION';
     notifications: boolean;
     autoSave: boolean;
+    youtubeConnected: boolean;
 }
 
 // ===== Topic & SEO Types =====
@@ -56,7 +67,10 @@ export type ProjectStatus =
     | 'scripting'
     | 'generating_media'
     | 'assembling'
+    | 'rendering'
+    | 'ready'
     | 'review'
+    | 'publishing'
     | 'published'
     | 'archived';
 
@@ -70,8 +84,19 @@ export interface Project {
     research: ResearchData;
     currentScriptId?: string;
     videoId?: string;
+    youtubeId?: string;
+    youtubeUrl?: string;
+    downloadUrl?: string;
+    renderProgress?: number; // 0-100
+    renderMessage?: string; // e.g., "Rendering Scene 5/15..."
+    mediaProgress?: number; // 0-100
+    mediaMessage?: string; // e.g., "Synthesizing scene 3/10..."
+    publishProgress?: number; // 0-100
+    publishMessage?: string; // e.g., "Uploading to YouTube (45%)..."
     estimatedDuration: number; // in minutes
     estimatedCost: number;
+    backgroundMusicUrl?: string;
+    backgroundMusicVolume?: number; // 0.0 to 1.0 (default 0.2)
     createdAt: Date;
     updatedAt: Date;
 }

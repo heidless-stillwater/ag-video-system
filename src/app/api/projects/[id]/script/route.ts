@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateDocumentaryScript } from '@/lib/services/ai';
 import { firestoreAdmin } from '@/lib/services/firestore-admin';
+import { cookies } from 'next/headers';
+import { EnvironmentMode } from '@/lib/config/environment';
 
 export async function POST(
     req: NextRequest,
@@ -20,8 +22,12 @@ export async function POST(
         }
 
         // 2. Generate Script via AI
+        const cookieStore = await cookies();
+        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        console.log(`[Script API] Environment Mode detected: ${envMode || 'DEFAULT'}`);
+
         const factStatements = project.research.facts.map(f => f.statement);
-        const generated = await generateDocumentaryScript(project.title, factStatements, project.estimatedDuration / 60);
+        const generated = await generateDocumentaryScript(project.title, factStatements, project.estimatedDuration / 60, envMode);
 
         // 3. Save Script to Firestore
         const totalWordCount = generated.sections.reduce((acc, s) => acc + s.wordCount, 0);
@@ -29,14 +35,17 @@ export async function POST(
             projectId,
             version: 1, // Start with version 1
             title: project.title,
-            sections: generated.sections.map((s, i) => ({
-                id: Math.random().toString(36).substr(2, 9),
-                title: s.title,
-                content: s.content,
-                order: i,
-                wordCount: s.wordCount,
-                estimatedDuration: Math.round(s.wordCount / 130 * 60), // In seconds
-            })),
+            sections: generated.sections.map((s, i) => {
+                const actualWordCount = s.content.split(/\s+/).length;
+                return {
+                    id: Math.random().toString(36).substr(2, 9),
+                    title: s.title,
+                    content: s.content,
+                    order: i,
+                    wordCount: actualWordCount,
+                    estimatedDuration: Math.round(actualWordCount / 130 * 60), // In seconds
+                };
+            }),
             totalWordCount,
             estimatedDuration: Math.round(totalWordCount / 130), // In minutes
             sleepFriendlinessScore: 95, // Default for generated

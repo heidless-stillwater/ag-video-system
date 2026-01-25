@@ -1,35 +1,61 @@
 import { GoogleAuth } from 'google-auth-library';
 import { VertexAI, GenerativeModel } from '@google-cloud/vertexai';
-import { getConfig, getEnvironmentMode } from '../config/environment';
+import { getConfig, getEnvironmentMode, EnvironmentMode } from '../config/environment';
+import path from 'path';
+import axios from 'axios';
 
 let vertexAI: VertexAI | null = null;
 
-function getVertexAI(): VertexAI {
+// Helper to get Vertex AI client with specific config
+function getVertexAI(envMode?: 'DEV' | 'STAGING' | 'PRODUCTION'): VertexAI {
     if (vertexAI) return vertexAI;
 
-    const config = getConfig();
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
 
     if (!projectId) {
         throw new Error('GOOGLE_CLOUD_PROJECT_ID is not set');
     }
 
+    const path = require('path');
+    const keyFile = path.resolve(process.cwd(), 'service-account.json');
+
     vertexAI = new VertexAI({
         project: projectId,
-        location: 'us-central1', // Default location
+        location: 'us-central1',
+        googleAuthOptions: {
+            keyFile: keyFile,
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        }
     });
 
     return vertexAI;
 }
 
-export async function generateContent(prompt: string): Promise<string> {
-    const mode = getEnvironmentMode();
-    const config = getConfig();
+// Helper to get an access token for direct REST calls (required for specialized models like Imagen 3)
+async function getAccessToken(): Promise<string | null | undefined> {
+    const keyFile = path.resolve(process.cwd(), 'service-account.json');
+    const auth = new GoogleAuth({
+        keyFile,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    });
+    const client = await auth.getClient();
+    const tokenRes = await client.getAccessToken();
+    return tokenRes.token;
+}
+
+export async function generateContent(prompt: string, overrideMode?: EnvironmentMode): Promise<string> {
+    const mode = overrideMode || getEnvironmentMode();
+    const config = getConfig(mode);
 
     if (mode === 'DEV' || config.ai.model === 'mock') {
-        if (prompt.toLowerCase().includes('format the output as a json') || prompt.toLowerCase().includes('json array')) {
-            // Return structured JSON mocks based on the prompt context
-            if (prompt.includes('sections')) {
+        const lowerPrompt = prompt.toLowerCase();
+        const isJsonRequest = lowerPrompt.includes('format the output as a json') ||
+            lowerPrompt.includes('json array') ||
+            lowerPrompt.includes('output format: json') ||
+            lowerPrompt.includes('metadata');
+
+        if (isJsonRequest) {
+            if (lowerPrompt.includes('sections')) {
                 return JSON.stringify({
                     sections: [
                         { title: "Introduction", content: "The journey begins in silence and shadow. We invite you to drift into a world of celestial wonder, where time slows down and the mind finds peace. In this space, every breath is a soft sigh of the universe, and every thought is a drifting star in the vast, velvet night. Let go of the day as we embark on this quiet exploration of the cosmic unknown. The horizon is but a suggestion of a dream yet to be dreamed.", wordCount: 80 },
@@ -38,13 +64,23 @@ export async function generateContent(prompt: string): Promise<string> {
                     ]
                 });
             }
-            if (prompt.includes('visual "cues"')) {
+            if (lowerPrompt.includes('visual "cues"') || lowerPrompt.includes('visual cues')) {
                 const titleMatch = prompt.match(/SECTION TITLE: (.*)/);
                 const title = titleMatch ? titleMatch[1] : 'Cinematic visualization';
                 const transitionTypes: ('fade' | 'blur' | 'zoom' | 'slide')[] = ['fade', 'blur', 'zoom', 'slide'];
-
-                // Shuffle transitions for this section to ensure variety
                 const shiftedTypes = [...transitionTypes].sort(() => Math.random() - 0.5);
+
+                if (config.ai.limitAI) {
+                    return JSON.stringify([
+                        {
+                            timestamp: 0,
+                            type: "image",
+                            description: `${title}: cinematic atmospheric shot (${shiftedTypes[0]}).`,
+                            transitionType: shiftedTypes[0],
+                            transitionDuration: 1500
+                        }
+                    ]);
+                }
 
                 return JSON.stringify([
                     {
@@ -77,9 +113,15 @@ export async function generateContent(prompt: string): Promise<string> {
                     }
                 ]);
             }
+            if (lowerPrompt.includes('youtube seo expert') || lowerPrompt.includes('title", "description", and "tags"')) {
+                return JSON.stringify({
+                    title: "Celestial Wonders: A Journey Through the Velvet Night",
+                    description: "Embark on a calming exploration of the universe. In this episode, we drift through distant galaxies and witness the silent dance of stars. Perfect for deep relaxation and sleep.",
+                    tags: ["sleep documentary", "space", "astronomy", "relaxation", "deep sleep", "calming", "celestial", "stars", "universe", "guided sleep", "meditation"]
+                });
+            }
         }
 
-        // Fallback for non-JSON or other mock prompts
         return `[MOCK RESPONSE for mode ${mode}]
 - The gentle ripples of a mountain lake reflect the starlight.
 - Ancient forests hold secrets of time in their deep roots.
@@ -107,14 +149,11 @@ export async function generateContent(prompt: string): Promise<string> {
     }
 }
 
-/**
- * Generates a full documentary script based on research facts.
- * Optimized for sleep (low arousal, slow pacing, calming vocabulary).
- */
 export async function generateDocumentaryScript(
     title: string,
     facts: string[],
-    targetDurationMinutes: number = 10
+    targetDurationMinutes: number = 10,
+    envMode?: EnvironmentMode
 ): Promise<{ sections: { title: string; content: string; wordCount: number }[] }> {
     const prompt = `
         You are a world-class scriptwriter for a "Sleep Documentary" channel. 
@@ -142,10 +181,9 @@ export async function generateDocumentaryScript(
         }
     `;
 
-    const response = await generateContent(prompt);
+    const response = await generateContent(prompt, envMode);
 
     try {
-        // Clean the response if it contains markdown code blocks
         const cleaned = response.replace(/```json/g, '').replace(/```/g, '').trim();
         return JSON.parse(cleaned);
     } catch (error) {
@@ -160,10 +198,7 @@ export async function generateDocumentaryScript(
     }
 }
 
-/**
- * Specifically for extracting facts from research content
- */
-export async function extractFacts(content: string): Promise<string[]> {
+export async function extractFacts(content: string, envMode?: EnvironmentMode): Promise<string[]> {
     const prompt = `
         You are a research assistant for a high-quality "sleep documentary" YouTube channel.
         Extract 10-15 interesting, factual, and calming points from the following content.
@@ -175,20 +210,17 @@ export async function extractFacts(content: string): Promise<string[]> {
         ${content}
     `;
 
-    const response = await generateContent(prompt);
+    const response = await generateContent(prompt, envMode);
     return response
         .split('\n')
         .map(line => line.replace(/^[-*•]\s+/, '').trim())
         .filter(line => line.length > 0 && !line.toLowerCase().includes('here are'));
 }
 
-/**
- * Generates visual descriptions (prompts) for each part of the script.
- * Returns a set of visual cues with timestamps.
- */
 export async function generateVisualCues(
     sectionTitle: string,
-    sectionContent: string
+    sectionContent: string,
+    envMode?: EnvironmentMode
 ): Promise<{
     timestamp: number;
     type: 'image' | 'video';
@@ -196,9 +228,14 @@ export async function generateVisualCues(
     transitionType?: 'fade' | 'blur' | 'zoom' | 'slide';
     transitionDuration?: number;
 }[]> {
+    const config = getConfig(envMode);
+    const cueCountPrompt = config.ai.limitAI
+        ? "generate exactly 1 high-impact cinematic visual 'cue'."
+        : "generate 3-5 visual 'cues'.";
+
     const prompt = `
         You are an art director for a cinematic, calming documentary channel.
-        For the following script section, generate 3-5 visual "cues".
+        For the following script section, ${cueCountPrompt}
         Each cue represents a high-quality, atmospheric piece of imagery that should be on screen.
 
         SECTION TITLE: ${sectionTitle}
@@ -207,8 +244,10 @@ export async function generateVisualCues(
         GUIDELINES:
         1. Aesthetic: Cinematic, high-dynamic-range, often slow-moving or static.
         2. Transitions: Every cue should specify a "transitionType" ('fade', 'blur', 'zoom', or 'slide') and a "transitionDuration" in milliseconds (default: 1200).
-        3. Format: JSON array of objects with "timestamp", "type", "description", "transitionType", and "transitionDuration".
-        4. Pacing: Space the cues evenly or based on content transitions.
+        3. Variety: Ensure each cue description is **unique, distinct, and highly varied** compared to the others in the section. Avoid repetition.
+        4. Format: JSON array of objects with "timestamp" (in SECONDS, e.g., 8.5 for 8.5 seconds), "type", "description", "transitionType", and "transitionDuration".
+        5. Pacing: Space the cues evenly or based on content transitions.
+        6. IMPORTANT: Timestamps MUST be in SECONDS. Do not use milliseconds (e.g. use 8, NOT 8000).
 
         Example Output:
         [
@@ -222,7 +261,7 @@ export async function generateVisualCues(
         ]
     `;
 
-    const response = await generateContent(prompt);
+    const response = await generateContent(prompt, envMode);
     try {
         const cleaned = response.replace(/```json/g, '').replace(/```/g, '').trim();
         return JSON.parse(cleaned);
@@ -236,40 +275,95 @@ export async function generateVisualCues(
     }
 }
 
-/**
- * Generates an image using Vertex AI Imagen.
- * For DEV mode, returns a placeholder or a beautiful stock-like image prompt.
- */
-export async function generateImage(prompt: string): Promise<Buffer | string> {
-    const mode = getEnvironmentMode();
-    const config = getConfig();
+export async function generateImage(prompt: string, envMode?: EnvironmentMode): Promise<Buffer | string> {
+    const config = getConfig(envMode);
 
-    if (mode === 'DEV' || config.ai.model === 'mock') {
+    console.log(`[generateImage] envMode: ${envMode}, config.ai.model: ${config.ai.model}`);
+
+    if (config.ai.model === 'mock') {
         const placeholders = [
-            'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b', // Mountains
-            'https://images.unsplash.com/photo-1506744038136-46273834b3fb', // Canyon
-            'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a', // Galaxy
-            'https://images.unsplash.com/photo-1501785888041-af3ef285b470', // Lake
-            'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1', // Sunrise
-            'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8', // Forest Fog
-            'https://images.unsplash.com/photo-1441974231531-c6227db76b6e', // Forest Sun
-            'https://images.unsplash.com/photo-1501854140801-50d01698950b', // Valley
-            'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d', // Fall Forest
-            'https://images.unsplash.com/photo-1426604966848-d7adac402bff', // Mountain Lake
-            'https://images.unsplash.com/photo-1433086966358-54859d0ed716', // Waterfall
-            'https://images.unsplash.com/photo-1511497584788-876760111969', // Pine Fog
-            'https://images.unsplash.com/photo-1502082553048-f009c37129b9', // Close Up Pine
-            'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa', // Space View
+            'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b',
+            'https://images.unsplash.com/photo-1506744038136-46273834b3fb',
+            'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a',
+            'https://images.unsplash.com/photo-1501785888041-af3ef285b470',
+            'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1',
+            'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8',
+            'https://images.unsplash.com/photo-1441974231531-c6227db76b6e',
+            'https://images.unsplash.com/photo-1501854140801-50d01698950b',
+            'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d',
+            'https://images.unsplash.com/photo-1426604966848-d7adac402bff',
+            'https://images.unsplash.com/photo-1433086966358-54859d0ed716',
+            'https://images.unsplash.com/photo-1511497584788-876760111969',
+            'https://images.unsplash.com/photo-1502082553048-f009c37129b9',
+            'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa',
         ];
 
-        // Random selection for variety in dev mode
         const index = Math.floor(Math.random() * placeholders.length);
         const randomSig = Math.floor(Math.random() * 1000000);
         return `${placeholders[index]}?auto=format&fit=crop&q=80&w=1000&sig=${randomSig}`;
     }
 
-    // TODO: Implement actual Vertex AI Imagen call using @google-cloud/aiplatform
-    // For now, in STAGING/PRODUCTION where we have credentials but might not have fixed Imagen implementation:
-    // We'll throw an error or return a high-quality Unsplash search URL as a fallback.
-    return `https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&q=80&w=1000`;
+    try {
+        const accessToken = await getAccessToken();
+        const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+
+        if (!accessToken || !projectId) {
+            throw new Error('Authentication or Project ID missing for REST API');
+        }
+
+        const endpoint = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-3.0-generate-001:predict`;
+
+        const enhancedPrompt = `cinematic, high dynamic range, photorealistic, highly detailed, atmospheric sleep documentray style, 8k resolution: ${prompt}`;
+
+        const payload = {
+            instances: [{ prompt: enhancedPrompt }],
+            parameters: {
+                sampleCount: 1,
+                aspectRatio: "16:9"
+            }
+        };
+
+        console.log(`[AI Service] Calling Imagen 3 REST API for: "${prompt.substring(0, 30)}..."`);
+        const response = await axios.post(endpoint, payload, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // Some versions of the API return 'predictions' directly, others wrap it
+        const predictions = response.data?.predictions;
+        if (predictions && predictions.length > 0) {
+            const result = predictions[0];
+            const base64Data = result.bytesBase64Encoded || result.mimeType ? result.bytesBase64Encoded : result;
+
+            if (typeof base64Data === 'string' && base64Data.length > 100) {
+                console.log(`[AI Service] Successfully synthesized real AI image via REST API`);
+                return Buffer.from(base64Data, 'base64');
+            }
+        }
+
+        console.error('[AI Service] Malformed REST response structure:', JSON.stringify(response.data).substring(0, 500));
+        throw new Error('Malformed or empty response from Vertex AI REST API');
+
+    } catch (error: any) {
+        // Detailed error logging to see WHY Google is rejecting us
+        if (error.response?.data) {
+            console.error('[AI Service] Vertex AI REST API REJECTION:', JSON.stringify(error.response.data, null, 2));
+        } else {
+            console.error('[AI Service] Vertex AI REST API FATAL error:', error.message);
+        }
+
+        // Fallback to randomized Unsplash if real AI fails in STAGING/PRODUCTION
+        const placeholders = [
+            'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b',
+            'https://images.unsplash.com/photo-1506744038136-46273834b3fb',
+            'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a',
+            'https://images.unsplash.com/photo-1501785888041-af3ef285b470',
+            'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1',
+        ];
+        const index = Math.floor(Math.random() * placeholders.length);
+        const randomSig = Math.floor(Math.random() * 1000000);
+        return `${placeholders[index]}?auto=format&fit=crop&q=80&w=1000&sig=${randomSig}&err=api_fail`;
+    }
 }

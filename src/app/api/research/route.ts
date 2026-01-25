@@ -3,6 +3,8 @@ import { researchService } from '@/lib/services/research';
 import { extractFacts } from '@/lib/services/ai';
 import { getProject, getTopic } from '@/lib/services/firestore-admin';
 import { Fact, ResearchSource } from '@/types';
+import { cookies } from 'next/headers';
+import { EnvironmentMode } from '@/lib/config/environment';
 
 /**
  * API Route for orchestrating the research phase.
@@ -55,7 +57,12 @@ export async function POST(req: NextRequest) {
         if (sources.length > 0) {
             console.log(`[Research API] Extracting facts from top sources...`);
             const combinedContent = sources.slice(0, 2).map(s => s.extractedContent).join('\n\n');
-            const rawFacts = await extractFacts(combinedContent);
+
+            const cookieStore = await cookies();
+            const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+            console.log(`[Research API] Environment Mode detected: ${envMode || 'DEFAULT'}`);
+
+            const rawFacts = await extractFacts(combinedContent, envMode);
             console.log(`[Research API] Extracted ${rawFacts.length} facts.`);
 
             extractedFacts = rawFacts.map(statement => ({
@@ -77,13 +84,11 @@ export async function POST(req: NextRequest) {
 
     } catch (error: any) {
         console.error('[Research API] Fatal orchestration error:', error);
-        // Explicitly return JSON even on fatal crash to avoid Next.js HTML error pages
-        return new Response(JSON.stringify({
+        console.error(error.stack);
+
+        return NextResponse.json({
             error: error.message || 'Fatal Server Error',
-            details: error.stack
-        }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
-        });
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        }, { status: 500 });
     }
 }

@@ -1,14 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-    onAuthStateChanged,
-    signInWithPopup,
-    GoogleAuthProvider,
-    signOut as firebaseSignOut,
-    User as FirebaseUser
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut as firebaseSignOut, User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User, UserSettings } from '@/types';
 
@@ -28,46 +22,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
+        let unsubscribeUser: (() => void) | null = null;
+
+        const unsubscribeAuth = onAuthStateChanged(auth, async (fUser) => {
             setFirebaseUser(fUser);
 
             if (fUser) {
-                // Fetch or create user profile in Firestore
+                // Listen for real-time updates to the user profile
                 const userDocRef = doc(db, 'users', fUser.uid);
-                const userDoc = await getDoc(userDocRef);
 
-                if (userDoc.exists()) {
-                    setUser(userDoc.data() as User);
-                } else {
-                    // Create new user profile
-                    const newUser: User = {
-                        id: fUser.uid,
-                        email: fUser.email || '',
-                        displayName: fUser.displayName || 'Anonymous',
-                        photoURL: fUser.photoURL || undefined,
-                        createdAt: new Date(),
-                        settings: {
-                            defaultMode: 'DEV',
-                            notifications: true,
-                            autoSave: true,
-                        }
-                    };
+                unsubscribeUser = onSnapshot(userDocRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        setUser(snapshot.data() as User);
+                        setLoading(false);
+                    } else {
+                        // Create initial profile if it doesn't exist
+                        const newUser: User = {
+                            id: fUser.uid,
+                            email: fUser.email || '',
+                            displayName: fUser.displayName || 'Anonymous',
+                            photoURL: fUser.photoURL || undefined,
+                            createdAt: new Date(),
+                            settings: {
+                                defaultMode: 'DEV',
+                                notifications: true,
+                                autoSave: true,
+                                youtubeConnected: false
+                            }
+                        };
 
-                    await setDoc(userDocRef, {
-                        ...newUser,
-                        createdAt: serverTimestamp(), // Use server timestamp for Firestore
-                    });
+                        setDoc(userDocRef, {
+                            ...newUser,
+                            createdAt: serverTimestamp(),
+                        });
 
-                    setUser(newUser);
-                }
+                        setUser(newUser);
+                        setLoading(false);
+                    }
+                });
             } else {
                 setUser(null);
+                setLoading(false);
             }
-
-            setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => {
+            unsubscribeAuth();
+            if (unsubscribeUser) unsubscribeUser();
+        };
     }, []);
 
     const signInWithGoogle = async () => {

@@ -1,11 +1,13 @@
 {
-    "hosting": {
-        "source": ".",
-        "site": "autovideo-v0-dev",
-        "ignore": [
-            "firebase.json",
-            "**/.*",
-            "**/node_modules/**"
-        ]
-    }
+    "hosting": [
+        {
+            "target": "autovideo",
+            "source": ".",
+            "ignore": [
+                "firebase.json",
+                "**/.*",
+                "**/node_modules/**"
+            ]
+        }
+    ]
 }
