@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getScript, getProject, updateProject } from '@/lib/services/firestore-admin';
 import { videoEngine } from '@/lib/services/video-engine';
 import { renderEngine } from '@/lib/services/render-engine';
+import { resourceGovernor } from '@/lib/services/resource-governor';
 
 /**
  * API Route to render the final documentary project to an MP4 file.
@@ -17,6 +18,15 @@ export async function POST(
 
         if (!scriptId) {
             return NextResponse.json({ error: 'scriptId is required' }, { status: 400 });
+        }
+
+        // 0. Safety Check: Prevent overload in WSL / Low-resource environments
+        const health = resourceGovernor.isSystemHealthy();
+        if (!health.healthy) {
+            return NextResponse.json({
+                error: `System Overload: ${health.reason}. Please wait for other tasks to finish before rendering.`,
+                retryAfter: 30
+            }, { status: 503 }); // Service Unavailable / Busy
         }
 
         // 1. Get Project and Script

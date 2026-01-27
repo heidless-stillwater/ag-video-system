@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getProject, getScript, updateProject } from '@/lib/services/firestore-admin';
+import { resourceGovernor } from '@/lib/services/resource-governor';
 import { generateThumbnailPrompt, generateImage, generateSEOMetadata } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
 import { EnvironmentMode } from '@/lib/config/environment';
@@ -19,6 +20,14 @@ export async function POST(
 
         if (!scriptId) {
             return NextResponse.json({ error: 'scriptId is required' }, { status: 400 });
+        }
+
+        // 0. Safety Check
+        const health = resourceGovernor.isSystemHealthy();
+        if (!health.healthy) {
+            return NextResponse.json({
+                error: `System Overload: ${health.reason}. Please wait for ongoing tasks to finish.`
+            }, { status: 503 });
         }
 
         // 1. Get Project and Script

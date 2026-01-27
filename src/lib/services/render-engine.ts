@@ -6,8 +6,9 @@ import ffmpegStatic from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 import axios from 'axios';
 import { Scene } from './video-engine';
-import { analyticsService } from './analytics';
+import { analyticsServerService } from './analytics-server';
 import { EnvironmentMode } from '../config/environment';
+import { resourceGovernor } from './resource-governor';
 
 // Configure ffmpeg to use the static binary
 const getFFmpegPath = () => {
@@ -47,21 +48,22 @@ if (finalFFprobePath) {
 
 // Common encoding settings to ensure all segments are identical for concatenation
 // This prevents "unsupported encoding settings" errors in media players.
-// WSL Stability: Use 'veryfast' preset and cap threads to leave room for the system process.
-const threadCount = Math.max(1, os.cpus().length - 2);
-
-const H264_OPTS = [
-    '-vcodec libx264',
-    '-pix_fmt yuv420p',
-    '-profile:v main',
-    '-level 5.1', // Level 5.1 is required for 4K @ 30fps
-    '-crf 18',
-    '-g 30', // Ensure frequent keyframes (especially at boundaries)
-    '-tune stillimage', // Optimized for documentary style
-    '-preset veryfast', // Much lighter on CPU than medium/slow
-    `-threads ${threadCount}`,
-    '-r 30'
-];
+// WSL Stability: Use 'veryfast' preset and dynamically adaptive threads.
+const getDynamicH264Opts = () => {
+    const threadCount = resourceGovernor.getRecommendedThreads();
+    return [
+        '-vcodec libx264',
+        '-pix_fmt yuv420p',
+        '-profile:v main',
+        '-level 5.1',
+        '-crf 18',
+        '-g 30',
+        '-tune stillimage',
+        '-preset veryfast',
+        `-threads ${threadCount}`,
+        '-r 30'
+    ];
+};
 
 /**
  * Server-side service to render documentary videos using direct FFmpeg assembly.
@@ -121,15 +123,16 @@ export const renderEngine = {
 
             console.log(`[FFmpegRenderEngine] SUCCESS: ${outputFile}`);
 
-            // Log usage
-            const durationSec = scenes.reduce((sum, s) => sum + s.duration, 0);
-            await analyticsService.logUsage({
+            // 8. Log Analytics
+            const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
+            await analyticsServerService.logUsage({
                 service: 'render',
                 operation: 'rendering',
-                model: 'ffmpeg-local-4k',
-                inputCount: durationSec, // Log total video duration in seconds
+                model: 'ffmpeg-h264',
+                inputCount: Math.ceil(totalDuration), // Duration in seconds
                 executionTimeMs: Date.now() - startTime,
-            }, 'PRODUCTION'); // Rendering is a heavy op, assume/force production logging for now or update signature
+                projectId: projectId
+            }, 'PRODUCTION'); // Rendering is always considered a heavy/production-level task
 
             return outputFile;
         } catch (error: any) {
@@ -304,7 +307,7 @@ export const renderEngine = {
                 .loop(duration)
                 .outputOptions([
                     '-t', duration.toString(),
-                    ...H264_OPTS
+                    ...getDynamicH264Opts()
                 ])
                 .on('end', () => resolve())
                 .on('error', (err) => reject(err))
@@ -332,7 +335,7 @@ export const renderEngine = {
                 ])
                 .outputOptions([
                     '-t', duration.toString(),
-                    ...H264_OPTS
+                    ...getDynamicH264Opts()
                 ])
                 .on('end', () => resolve())
                 .on('error', (err) => reject(err))
@@ -389,6 +392,9 @@ export const renderEngine = {
                     const progress = 25 + Math.round((i / scenes.length) * 65);
                     await onProgress(progress, `Baking scene ${i + 1}/${scenes.length}...`);
                 }
+
+                // Adaptive Throttling: Let the system breathe in WSL / High Load
+                await resourceGovernor.getAdaptiveDelay();
 
                 // 1. Render Steady Part
                 const steadyDuration = scenes[i].duration - transitionDuration;
@@ -675,7 +681,7 @@ export const renderEngine = {
 
             // Map Video
             if (subtitlesEnabled) {
-                outputOptions.push('-map [v_sub]', ...H264_OPTS);
+                outputOptions.push('-map [v_sub]', ...getDynamicH264Opts());
             } else {
                 outputOptions.push('-map 0:v', '-c:v copy');
             }

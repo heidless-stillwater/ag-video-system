@@ -113,9 +113,15 @@ export interface Project {
         selectedTitle?: string;
     };
     savedRenders?: SavedRender[];
+    translations?: { language: string; scriptId: string }[];
+    activeDubbingSessionId?: string;
+    cancelledDubbingSessionId?: string;
+    visualStyle?: VisualStyle;
     createdAt: Date;
     updatedAt: Date;
 }
+
+export type VisualStyle = 'cinematic' | 'anime' | 'cyberpunk' | 'oil-painting' | 'national-geographic' | 'studio-ghibli' | 'vaporwave' | 'watercolor' | 'sketch';
 
 export interface SavedRender {
     id: string;
@@ -159,6 +165,9 @@ export interface Script {
     totalWordCount: number;
     estimatedDuration: number; // in minutes
     sleepFriendlinessScore: number; // 0-100
+    languageCode?: string; // e.g., 'en-US', 'es-ES', 'fr-FR'
+    isTranslation?: boolean;
+    sourceScriptId?: string; // Original script ID if this is a translation
     createdAt: Date;
     updatedAt: Date;
     thumbnailUrl?: string;
@@ -171,7 +180,7 @@ export interface ScriptSection {
     order: number;
     wordCount: number;
     estimatedDuration: number; // in seconds
-    audioUrl?: string;
+    audioUrl?: string | null;
     audioStatus?: 'pending' | 'generating' | 'ready' | 'failed';
     notes?: string;
     visualCues?: VisualCue[];

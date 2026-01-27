@@ -1,9 +1,11 @@
 import { GoogleAuth } from 'google-auth-library';
 import { VertexAI, GenerativeModel } from '@google-cloud/vertexai';
 import { getConfig, getEnvironmentMode, EnvironmentMode } from '../config/environment';
-import { analyticsService } from './analytics';
+import { analyticsServerService } from './analytics-server';
 import path from 'path';
 import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
+import { ScriptSection } from '@/types';
 
 let vertexAI: VertexAI | null = null;
 
@@ -149,7 +151,7 @@ export async function generateContent(prompt: string, overrideMode?: Environment
         const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
         // Log usage
-        await analyticsService.logUsage({
+        await analyticsServerService.logUsage({
             service: 'vertex-ai',
             operation: 'script-generation',
             model: config.ai.model,
@@ -350,7 +352,7 @@ export async function generateImage(prompt: string, envMode?: EnvironmentMode): 
                 console.log(`[AI Service] Successfully synthesized real AI image via REST API`);
 
                 // Log usage
-                await analyticsService.logUsage({
+                await analyticsServerService.logUsage({
                     service: 'vertex-ai',
                     operation: 'image-generation',
                     model: 'imagen-3.0-generate-001',
@@ -436,6 +438,87 @@ export async function generateSEOMetadata(script: any, envMode?: EnvironmentMode
             titles: [script.title, `${script.title} (Cinematic Documentary)`, `The Mystery of ${script.title}`],
             description: `A calming exploration of ${script.title}.`,
             tags: ["documentary", "sleep", "calming", script.title.toLowerCase()]
+        };
+    }
+}
+
+/**
+ * Translates a script into the target language while preserving the calming sleep tone.
+ * Uses Gemini to ensure high-quality, natural-sounding translations.
+ */
+export async function translateScript(
+    script: { title: string; sections: ScriptSection[] },
+    targetLanguage: string,
+    envMode?: EnvironmentMode
+): Promise<{ title: string; sections: ScriptSection[] }> {
+    const languageNames: Record<string, string> = {
+        'es-ES': 'Spanish (Spain)',
+        'fr-FR': 'French (France)',
+        'de-DE': 'German (Germany)',
+        'ja-JP': 'Japanese',
+        'pt-BR': 'Portuguese (Brazil)',
+    };
+
+    const langName = languageNames[targetLanguage] || targetLanguage;
+
+    const prompt = `
+        You are a world-class translator specializing in calming, documentary-style content.
+        Translate the following documentary script into ${langName}.
+        
+        IMPORTANT GUIDELINES:
+        1. Maintain the slow, calming, and sleep-inducing tone of the original.
+        2. Use soft, gentle vocabulary appropriate for ${langName}.
+        3. Preserve the structure (title + sections with titles and content).
+        4. Keep pacing natural for spoken narration in ${langName}.
+        
+        ORIGINAL SCRIPT:
+        Title: ${script.title}
+        
+        Sections:
+        ${script.sections.map((s, i) => `${i + 1}. "${s.title}": ${s.content.substring(0, 1000)}`).join('\n\n')}
+        
+        FORMAT YOUR OUTPUT AS JSON.
+        YOU MUST RETURN THE EXACT SAME NUMBER OF SECTIONS.
+        YOU MUST PRESERVE ITEM IDs IF PROVIDED.
+    `;
+
+    try {
+        const response = await generateContent(prompt, envMode);
+        const cleaned = response.replace(/\`\`\`json/g, '').replace(/\`\`\`/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+
+        // Merge translated text with original visual cues
+        const mappedSections = script.sections.map((originalSection, i) => {
+            const translated = parsed.sections[i] || parsed.sections[0]; // Fallback
+            return {
+                ...originalSection,
+                title: translated.title || originalSection.title,
+                content: translated.content || originalSection.content,
+                wordCount: translated.wordCount || originalSection.wordCount,
+                audioUrl: null, // Set to null for Firestore compatibility
+                audioStatus: 'pending' as const,
+                id: uuidv4(), // New ID for new script version
+            };
+        });
+
+        console.log(`[AI Service] Successfully translated script to ${langName}`);
+        return {
+            title: parsed.title,
+            sections: mappedSections
+        };
+    } catch (error: any) {
+        console.error(`[AI Service] Translation failed for ${langName}:`, error.message);
+        // Return a simple fallback with "[TRANSLATION PENDING]" markers
+        return {
+            title: `[${targetLanguage.toUpperCase()}] ${script.title}`,
+            sections: script.sections.map(s => ({
+                ...s,
+                id: uuidv4(),
+                title: `[${targetLanguage.toUpperCase()}] ${s.title}`,
+                content: `[Translation to ${langName} pending] ${s.content}`,
+                audioUrl: null,
+                audioStatus: 'pending' as const
+            }))
         };
     }
 }

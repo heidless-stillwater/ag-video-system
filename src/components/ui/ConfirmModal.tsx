@@ -12,6 +12,7 @@ interface ConfirmModalProps {
     isLoading?: boolean;
     onConfirm: () => void;
     onClose: () => void;
+    singleButton?: boolean;
 }
 
 /**
@@ -28,6 +29,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     isLoading = false,
     onConfirm,
     onClose,
+    singleButton = false,
 }) => {
     const [isMounted, setIsMounted] = useState(false);
 
@@ -66,7 +68,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                     <div className="flex items-center gap-4 mb-4">
                         <div className={`w-12 h-12 rounded-2xl flex-shrink-0 flex items-center justify-center text-2xl ${isDestructive ? 'bg-red-500/10' : 'bg-blue-500/10'
                             }`}>
-                            {isDestructive ? '⚠️' : '❓'}
+                            {isDestructive ? '⚠️' : (singleButton ? 'ℹ️' : '❓')}
                         </div>
                         <h3 className="text-xl font-bold text-white">{title}</h3>
                     </div>
@@ -76,13 +78,15 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                     </p>
 
                     <div className="flex items-center gap-3 mt-auto">
-                        <button
-                            onClick={onClose}
-                            disabled={isLoading}
-                            className="flex-1 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-all disabled:opacity-50"
-                        >
-                            {cancelLabel}
-                        </button>
+                        {!singleButton && (
+                            <button
+                                onClick={onClose}
+                                disabled={isLoading}
+                                className="flex-1 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-all disabled:opacity-50"
+                            >
+                                {cancelLabel}
+                            </button>
+                        )}
                         <button
                             onClick={onConfirm}
                             disabled={isLoading}

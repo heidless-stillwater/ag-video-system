@@ -57,6 +57,18 @@ export default function ProjectDetailPage() {
     const [costLogs, setCostLogs] = useState<UsageLog[]>([]);
     const [projectCost, setProjectCost] = useState(0);
 
+    // Global Launchpad (Dubbing) State
+    const [isDubbing, setIsDubbing] = useState(false);
+    const [selectedDubLanguage, setSelectedDubLanguage] = useState<string>('es-ES');
+    const [availableTranslations, setAvailableTranslations] = useState<{ language: string; scriptId: string }[]>([]);
+    const SUPPORTED_LANGUAGES = [
+        { code: 'es-ES', name: 'Spanish 🇪🇸' },
+        { code: 'fr-FR', name: 'French 🇫🇷' },
+        { code: 'de-DE', name: 'German 🇩🇪' },
+        { code: 'ja-JP', name: 'Japanese 🇯🇵' },
+        { code: 'pt-BR', name: 'Portuguese 🇧🇷' },
+    ];
+
     // Step Confirmation State
     const [stepConfirm, setStepConfirm] = useState<{
         isOpen: boolean;
@@ -69,6 +81,30 @@ export default function ProjectDetailPage() {
         message: '',
         onConfirm: () => { },
     });
+
+    const [infoModal, setInfoModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+    });
+
+    const [dubConfirmModal, setDubConfirmModal] = useState<{
+        isOpen: boolean;
+        languageCode: string;
+        languageName: string;
+        isRegen: boolean;
+    }>({
+        isOpen: false,
+        languageCode: '',
+        languageName: '',
+        isRegen: false,
+    });
+
+    const [dubbingProgress, setDubbingProgress] = useState<Record<string, number>>({});
 
     const interceptAction = (action: () => void, title: string, message: string) => {
         if (envConfig.ai.limitAI) {
@@ -88,6 +124,7 @@ export default function ProjectDetailPage() {
             const projectData = await projectService.getProject(projectId);
             if (projectData) {
                 setProject(projectData);
+                setAvailableTranslations(projectData.translations || []); // Set translations
 
                 // If the project has a script associated, load it
                 let scriptData = null;
@@ -159,6 +196,48 @@ export default function ProjectDetailPage() {
             if (interval) clearInterval(interval);
         };
     }, [project?.status, projectId]);
+
+    // Poll for dubbing progress
+    useEffect(() => {
+        const activeLanguages = Object.keys(dubbingProgress);
+        if (activeLanguages.length === 0) return;
+
+        const interval = setInterval(async () => {
+            for (const lang of activeLanguages) {
+                // Find script ID for this language
+                const translation = availableTranslations.find(t => t.language === lang);
+                if (!translation) continue;
+
+                try {
+                    const scr = await scriptService.getScript(translation.scriptId);
+                    if (scr) {
+                        const totalSections = scr.sections.length;
+                        const readySections = scr.sections.filter(s => s.audioStatus === 'ready').length;
+                        const progress = Math.round((readySections / totalSections) * 100);
+
+                        setDubbingProgress(prev => {
+                            if (progress >= 100) {
+                                // Remove from progress map when complete
+                                const next = { ...prev };
+                                delete next[lang];
+                                return next;
+                            }
+                            return { ...prev, [lang]: progress };
+                        });
+
+                        // If completed, refresh main script if it's the current one
+                        if (progress >= 100 && script?.id === translation.scriptId) {
+                            await loadProjectAndScript();
+                        }
+                    }
+                } catch (err) {
+                    console.error(`Failed to poll dubbing progress for ${lang}`, err);
+                }
+            }
+        }, 3000);
+
+        return () => clearInterval(interval);
+    }, [dubbingProgress, availableTranslations, script?.id]);
 
     const repairLegacyAudio = async (proj: Project, scr: Script | null) => {
         let projectNeedsUpdate = false;
@@ -871,6 +950,77 @@ export default function ProjectDetailPage() {
         }, 'Viral Suite Optimize?', 'This will use Gemini and Imagen to generate optimized SEO metadata and a cinematic custom thumbnail.');
     };
 
+    // 4. Initiate Dubbing (Open Confirmation)
+    const initiateDubbing = (languageCode: string) => {
+        const langName = SUPPORTED_LANGUAGES.find(l => l.code === languageCode)?.name || languageCode;
+        const isRegen = availableTranslations.some(t => t.language === languageCode);
+        setDubConfirmModal({
+            isOpen: true,
+            languageCode,
+            languageName: langName,
+            isRegen
+        });
+    };
+
+    // 5. Confirm & Execute Dubbing
+    const confirmDubbing = async () => {
+        if (!project || !script || !dubConfirmModal.languageCode) return;
+
+        // Close confirmation modal immediately
+        const targetLangCode = dubConfirmModal.languageCode;
+        const targetLangName = dubConfirmModal.languageName;
+        setDubConfirmModal(prev => ({ ...prev, isOpen: false }));
+
+        setIsDubbing(true);
+        try {
+            const hasExisting = availableTranslations.some(t => t.language === targetLangCode);
+            const response = await fetch(`/api/projects/${project.id}/dub`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    targetLanguage: targetLangCode,
+                    currentScriptId: project.currentScriptId, // Use current script as source
+                    force: hasExisting
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Dubbing failed');
+            }
+
+            // Reload translations
+            await loadProjectAndScript();
+
+            // Initialize progress
+            setDubbingProgress(prev => ({ ...prev, [targetLangCode]: 0 }));
+        } catch (err: any) {
+            setError('Dubbing Error: ' + err.message);
+        } finally {
+            setIsDubbing(false);
+        }
+    };
+
+    // 6. Cancel Active Dubbing
+    const handleCancelDubbing = async () => {
+        if (!project) return;
+
+        try {
+            const response = await fetch(`/api/projects/${project.id}/dub/cancel`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                // Clear local progress tracking for all languages
+                setDubbingProgress({});
+                // Refresh project to get new status
+                await loadProjectAndScript();
+            }
+        } catch (err: any) {
+            console.error('Failed to cancel dubbing:', err);
+        }
+    };
+
     if (isLoading) {
         return (
             <ProtectedRoute>
@@ -965,6 +1115,90 @@ export default function ProjectDetailPage() {
 
                         </div>
                     </div>
+                    {/* Global Launchpad (Dubbing) */}
+                    <div className="max-w-7xl mx-auto px-4 pb-4">
+                        <div className="bg-gradient-to-r from-indigo-900/50 to-purple-900/50 border border-indigo-500/30 rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg shadow-indigo-900/20 backdrop-blur-sm">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-indigo-500/20 rounded-lg border border-indigo-500/30">
+                                    <span className="text-2xl">🌍</span>
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white flex items-center gap-2">
+                                        Global Launchpad
+                                        {availableTranslations.length > 0 && (
+                                            <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] rounded-full uppercase tracking-wider border border-green-500/20">
+                                                {availableTranslations.length} Active
+                                            </span>
+                                        )}
+                                    </h3>
+                                    <p className="text-xs text-indigo-200">Expand your documentary to new languages with AI Dubbing.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                                {/* Language Selector */}
+                                <select
+                                    value={selectedDubLanguage}
+                                    onChange={(e) => setSelectedDubLanguage(e.target.value)}
+                                    className="bg-slate-900 border border-indigo-500/30 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[160px]"
+                                >
+                                    {SUPPORTED_LANGUAGES.map(lang => (
+                                        <option key={lang.code} value={lang.code}>
+                                            {lang.name} {availableTranslations.some(t => t.language === lang.code) ? '✓' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+
+                                <button
+                                    onClick={() => initiateDubbing(selectedDubLanguage)}
+                                    disabled={
+                                        isDubbing ||
+                                        (!!dubbingProgress[selectedDubLanguage]) ||
+                                        !project.currentScriptId
+                                    }
+                                    className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shadow-lg min-w-[140px] justify-center ${availableTranslations.some(t => t.language === selectedDubLanguage)
+                                        ? 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-200 border border-amber-500/30 shadow-amber-900/10'
+                                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20 hover:shadow-indigo-500/40'
+                                        } hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed`}
+                                >
+                                    {isDubbing ? (
+                                        <>
+                                            <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                            <span>Starting...</span>
+                                        </>
+                                    ) : dubbingProgress[selectedDubLanguage] !== undefined ? (
+                                        <>
+                                            <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                            <span>Dubbing {dubbingProgress[selectedDubLanguage]}%...</span>
+                                        </>
+                                    ) : availableTranslations.some(t => t.language === selectedDubLanguage) ? (
+                                        <>
+                                            <span className="text-lg">🔄</span>
+                                            <span>Redub</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span className="text-lg">🚀</span>
+                                            <span>Launch Dub</span>
+                                        </>
+                                    )}
+                                </button>
+
+                                {(isDubbing || dubbingProgress[selectedDubLanguage] !== undefined) && (
+                                    <button
+                                        onClick={handleCancelDubbing}
+                                        className="p-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg border border-red-500/30 transition-all shadow-lg hover:scale-110 active:scale-95"
+                                        title="Cancel Dubbing"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Cost Breakdown Bar (New) */}
                     <div className="max-w-7xl mx-auto px-4 pb-4">
                         <div className="bg-white/5 border border-white/10 rounded-lg p-3 flex items-center justify-between text-xs">
@@ -1087,6 +1321,29 @@ export default function ProjectDetailPage() {
                                                             globalSfxVolume: settings.globalSfxVolume
                                                         } as any);
                                                         await loadProjectAndScript();
+                                                    }}
+                                                    availableLanguages={[
+                                                        { code: 'en-US', name: 'Original (English)', scriptId: project.currentScriptId! },
+                                                        ...availableTranslations.map(t => ({
+                                                            code: t.language,
+                                                            name: SUPPORTED_LANGUAGES.find(l => l.code === t.language)?.name || t.language,
+                                                            scriptId: t.scriptId
+                                                        }))
+                                                    ]}
+                                                    currentLanguageCode={script?.languageCode || 'en-US'}
+                                                    onLanguageChange={async (scriptId) => {
+                                                        if (!script || scriptId === script.id) return;
+                                                        try {
+                                                            setIsLoading(true);
+                                                            const newScript = await scriptService.getScript(scriptId);
+                                                            if (newScript) {
+                                                                setScript(newScript);
+                                                            }
+                                                        } catch (err: any) {
+                                                            setError('Failed to switch language: ' + err.message);
+                                                        } finally {
+                                                            setIsLoading(false);
+                                                        }
                                                     }}
                                                 />
                                             )}
@@ -1880,6 +2137,32 @@ export default function ProjectDetailPage() {
                             message={stepConfirm.message}
                             confirmLabel="Confirm API Call"
                             isDestructive={false}
+                        />
+
+                        {/* Dubbing Confirmation Modal */}
+                        <ConfirmModal
+                            isOpen={dubConfirmModal.isOpen}
+                            onClose={() => setDubConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                            onConfirm={confirmDubbing}
+                            title={dubConfirmModal.isRegen ? "Regenerate Translation?" : "Initiate Dubbing?"}
+                            message={dubConfirmModal.isRegen
+                                ? `Are you sure you want to RE-GENERATE the ${dubConfirmModal.languageName} translation? This will overwrite the existing script and audio for this language.`
+                                : `Are you sure you want to translate this documentary to ${dubConfirmModal.languageName}? This will generate a new script and start the audio synthesis process.`
+                            }
+                            confirmLabel={dubConfirmModal.isRegen ? "Regenerate" : "Start Dubbing"}
+                            cancelLabel="Cancel"
+                            isDestructive={dubConfirmModal.isRegen}
+                        />
+
+                        {/* Info / Success Modal */}
+                        <ConfirmModal
+                            isOpen={infoModal.isOpen}
+                            onClose={() => setInfoModal(prev => ({ ...prev, isOpen: false }))}
+                            onConfirm={() => setInfoModal(prev => ({ ...prev, isOpen: false }))}
+                            title={infoModal.title}
+                            message={infoModal.message}
+                            confirmLabel="OK"
+                            singleButton={true}
                         />
                     </>
                 )}

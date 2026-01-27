@@ -60,6 +60,12 @@ import { getStorage } from 'firebase-admin/storage';
 // Named database instance
 // getFirestore('autovideo-db-0') works in firebase-admin v11.3+
 const dbAdmin = getFirestore('autovideo-db-0');
+// CRITICAL: settings() must be called immediately after instantiation
+try {
+    dbAdmin.settings({ ignoreUndefinedProperties: true });
+} catch (e) {
+    console.warn('[Firebase Admin] Firestore settings already applied or could not be set.');
+}
 const storage = getStorage();
 
 export { admin, dbAdmin as db, storage };

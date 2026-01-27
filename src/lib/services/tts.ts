@@ -1,6 +1,6 @@
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 import { getConfig, EnvironmentMode } from '../config/environment';
-import { analyticsService } from './analytics';
+import { analyticsServerService } from './analytics-server';
 
 let ttsClient: TextToSpeechClient | null = null;
 
@@ -21,20 +21,54 @@ function getTTSClient(): TextToSpeechClient {
 }
 
 /**
+ * Map of sleep-optimized voices for each supported language.
+ */
+const SLEEP_VOICES: Record<string, { languageCode: string; voiceName: string }> = {
+    'en-US': { languageCode: 'en-US', voiceName: 'en-US-Neural2-J' },
+    'es-ES': { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' },
+    'fr-FR': { languageCode: 'fr-FR', voiceName: 'fr-FR-Neural2-A' },
+    'de-DE': { languageCode: 'de-DE', voiceName: 'de-DE-Neural2-D' },
+    'ja-JP': { languageCode: 'ja-JP', voiceName: 'ja-JP-Neural2-C' },
+    'pt-BR': { languageCode: 'pt-BR', voiceName: 'pt-BR-Neural2-B' },
+};
+
+/**
  * Generates an MP3 audio buffer from text using Google Cloud Text-to-Speech.
  * Optimized for sleep documentaries (slow pacing, calming pitch).
+ * @param text The text to synthesize.
+ * @param envMode The environment mode.
+ * @param languageCode Optional language code (e.g., 'es-ES'). Defaults to 'en-US'.
  */
-export async function generateSpeech(text: string, envMode?: EnvironmentMode): Promise<Buffer> {
+export async function generateSpeech(
+    text: string,
+    envMode?: EnvironmentMode,
+    languageCode: string = 'en-US'
+): Promise<Buffer> {
     const client = getTTSClient();
     const config = getConfig(envMode);
 
+    const voiceConfig = SLEEP_VOICES[languageCode] || SLEEP_VOICES['en-US'];
+
+    // Helper to escape XML special characters for SSML
+    const escapeXml = (unsafe: string) => {
+        return unsafe.replace(/[<>&"']/g, (c) => {
+            switch (c) {
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '&': return '&amp;';
+                case '"': return '&quot;';
+                case "'": return '&apos;';
+                default: return c;
+            }
+        });
+    };
+
     // Use SSML to add pauses and control pacing more precisely
-    // We split by paragraphs and add a 3-second break between them
     const paragraphs = text.split('\n\n').filter(p => p.trim().length > 0);
     const ssml = `
         <speak>
             <prosody rate="${config.tts.speakingRate}" pitch="-3st">
-                ${paragraphs.join('<break time="3s"/>')}
+                ${paragraphs.map(p => escapeXml(p)).join('<break time="3s"/>')}
             </prosody>
         </speak>
     `;
@@ -42,12 +76,12 @@ export async function generateSpeech(text: string, envMode?: EnvironmentMode): P
     const request = {
         input: { ssml },
         voice: {
-            languageCode: 'en-US',
-            name: 'en-US-Neural2-J', // A deep, calming male voice (or en-US-Studio-O/Q for high quality)
+            languageCode: voiceConfig.languageCode,
+            name: voiceConfig.voiceName,
         },
         audioConfig: {
             audioEncoding: 'MP3' as const,
-            effectsProfileId: ['small-bluetooth-speaker-class-device'], // Optimized for typical sleep listening
+            effectsProfileId: ['small-bluetooth-speaker-class-device'],
         },
     };
 
@@ -55,11 +89,10 @@ export async function generateSpeech(text: string, envMode?: EnvironmentMode): P
         const startTime = Date.now();
         const [response] = await client.synthesizeSpeech(request);
 
-        // Log usage
-        await analyticsService.logUsage({
+        await analyticsServerService.logUsage({
             service: 'google-tts',
             operation: 'speech-synthesis',
-            model: request.voice?.name || 'standard',
+            model: voiceConfig.voiceName,
             inputCount: text.length,
             executionTimeMs: Date.now() - startTime,
         }, envMode);

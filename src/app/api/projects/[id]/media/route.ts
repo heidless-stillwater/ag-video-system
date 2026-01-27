@@ -4,6 +4,7 @@ import { getConfig, EnvironmentMode } from '@/lib/config/environment';
 import { generateVisualCues, generateImage } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
 import { getScript, updateScript, updateProject } from '@/lib/services/firestore-admin';
+import { resourceGovernor } from '@/lib/services/resource-governor';
 import { VisualCue } from '@/types';
 
 /**
@@ -20,6 +21,14 @@ export async function POST(
 
         if (!scriptId) {
             return NextResponse.json({ error: 'scriptId is required' }, { status: 400 });
+        }
+
+        // 0. Safety Check
+        const health = resourceGovernor.isSystemHealthy();
+        if (!health.healthy) {
+            return NextResponse.json({
+                error: `System Overload: ${health.reason}. Please wait for other tasks to finish.`
+            }, { status: 503 });
         }
 
         // 1. Get Script Details

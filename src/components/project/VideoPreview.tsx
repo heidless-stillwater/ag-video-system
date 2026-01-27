@@ -21,6 +21,9 @@ interface VideoPreviewProps {
         globalSfxVolume: number;
     }) => Promise<void>;
     isInline?: boolean;
+    availableLanguages?: { code: string; name: string; scriptId: string }[];
+    currentLanguageCode?: string;
+    onLanguageChange?: (scriptId: string) => Promise<void>;
 }
 
 /**
@@ -39,7 +42,10 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
     subtitleStyle = 'minimal',
     onClose,
     onSaveAudioSettings,
-    isInline = false
+    isInline = false,
+    availableLanguages,
+    currentLanguageCode,
+    onLanguageChange
 }) => {
     const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -395,6 +401,14 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                             isVisible={isPlaying}
                         />
                     )}
+
+                    {/* Audio Status Indicator */}
+                    {!currentScene?.audioUrl && isPlaying && (
+                        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 bg-indigo-600/80 backdrop-blur-md rounded-full border border-indigo-400/30 flex items-center gap-2 shadow-lg animate-pulse">
+                            <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                            <span className="text-[10px] font-bold text-white uppercase tracking-widest">Synthesizing Audio...</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Controls */}
@@ -474,8 +488,30 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
                                 </svg>
                             </button>
-                            <div className="text-right min-w-[120px]">
+                            <div className="text-right min-w-[120px] flex flex-col items-end gap-1">
                                 <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Scene {currentSceneIndex + 1} of {scenes.length}</span>
+
+                                {availableLanguages && availableLanguages.length > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Audio:</span>
+                                        <select
+                                            value={currentLanguageCode}
+                                            onChange={(e) => {
+                                                const selected = availableLanguages.find(l => l.code === e.target.value);
+                                                if (selected && onLanguageChange) {
+                                                    onLanguageChange(selected.scriptId);
+                                                }
+                                            }}
+                                            className="bg-transparent text-[10px] font-bold text-white uppercase tracking-wider focus:outline-none cursor-pointer hover:text-blue-400 transition-colors text-right"
+                                        >
+                                            {availableLanguages.map(lang => (
+                                                <option key={lang.code} value={lang.code} className="bg-slate-900 text-slate-300">
+                                                    {lang.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

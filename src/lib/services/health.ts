@@ -2,6 +2,9 @@ import { VertexAI } from '@google-cloud/vertexai';
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 import { google } from 'googleapis';
 import { db, storage } from '@/lib/firebase-admin';
+import { resourceGovernor } from './resource-governor';
+import os from 'os';
+import path from 'path';
 
 export interface HealthCheckResult {
     service: string;
@@ -21,9 +24,17 @@ export async function checkVertexAI(): Promise<HealthCheckResult> {
     try {
         const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
         const location = 'us-central1';
+        const keyFile = path.resolve(process.cwd(), 'service-account.json');
 
-        const vertexAI = new VertexAI({ project: projectId!, location });
-        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+        const vertexAI = new VertexAI({
+            project: projectId!,
+            location,
+            googleAuthOptions: {
+                keyFile: keyFile,
+                scopes: ['https://www.googleapis.com/auth/cloud-platform']
+            }
+        });
+        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash-001' });
 
         // Lightweight health check prompt
         const result = await Promise.race([
@@ -210,6 +221,29 @@ export async function checkStorage(): Promise<HealthCheckResult> {
 }
 
 /**
+ * Check Local System Load (WSL Stability)
+ */
+export async function checkLocalSystem(): Promise<HealthCheckResult> {
+    const startTime = Date.now();
+    const pressure = resourceGovernor.getSystemPressure();
+    const freeMemGB = os.freemem() / (1024 * 1024 * 1024);
+
+    let status: 'operational' | 'degraded' | 'down' = 'operational';
+    let message = `CPU Load: ${(pressure * 100).toFixed(0)}%, Free RAM: ${freeMemGB.toFixed(2)}GB`;
+
+    if (pressure > 0.8) status = 'degraded';
+    if (pressure > 0.95 || freeMemGB < 0.3) status = 'down';
+
+    return {
+        service: 'Local System (WSL)',
+        status,
+        responseTime: Date.now() - startTime,
+        message,
+        lastChecked: new Date()
+    };
+}
+
+/**
  * Run all health checks in parallel
  */
 export async function runAllHealthChecks(): Promise<HealthCheckResult[]> {
@@ -218,14 +252,15 @@ export async function runAllHealthChecks(): Promise<HealthCheckResult[]> {
         checkGoogleTTS(),
         checkFirestore(),
         checkYouTubeAPI(),
-        checkStorage()
+        checkStorage(),
+        checkLocalSystem()
     ]);
 
     return checks.map((result, index) => {
         if (result.status === 'fulfilled') {
             return result.value;
         } else {
-            const services = ['Vertex AI', 'Google TTS', 'Firestore', 'YouTube API', 'Storage'];
+            const services = ['Vertex AI', 'Google TTS', 'Firestore', 'YouTube API', 'Storage', 'Local System'];
             return {
                 service: services[index],
                 status: 'down' as const,
