@@ -90,7 +90,7 @@ export async function POST(
                 await updateProject(projectId, { publishMessage: 'Authenticating with Google...' } as any);
 
                 const youtubeResponse = await youtubeService.uploadVideo(
-                    accessToken,
+                    { accessToken, refreshToken },
                     videoStream,
                     metadata,
                     privacy,
@@ -101,8 +101,11 @@ export async function POST(
                             publishProgress: progress,
                             publishMessage: `Uploading video to YouTube (${progress}%)...`
                         } as any);
-                    }
+                    },
+                    project.thumbnailUrl
                 );
+
+                console.log(`[YouTube Publish API] uploadVideo returned. Thumbnail URL used: ${project.thumbnailUrl || 'NONE'}`);
 
                 // 4. Update Project Status on Success
                 await updateProject(projectId, {

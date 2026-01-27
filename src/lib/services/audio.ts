@@ -39,6 +39,28 @@ export const AMBIENT_TRACKS: AmbientTrack[] = [
     }
 ];
 
+export interface SoundEffect {
+    id: string;
+    label: string;
+    url: string;
+    category: 'nature' | 'weather' | 'space' | 'tranquil' | 'ambient';
+}
+
+export const SOUND_EFFECTS: SoundEffect[] = [
+    { id: 'sfx-birds', label: 'Morning Birds', category: 'nature', url: '/audio/sfx/birds.mp3' },
+    { id: 'sfx-fire', label: 'Crackling Fire', category: 'nature', url: '/audio/sfx/fire.mp3' },
+    { id: 'sfx-waves', label: 'Gentle Waves', category: 'nature', url: '/audio/sfx/waves.mp3' },
+    { id: 'sfx-wind', label: 'Soft Wind', category: 'weather', url: '/audio/sfx/wind.mp3' },
+    { id: 'sfx-space', label: 'Cosmic Hum', category: 'space', url: '/audio/sfx/space.mp3' },
+    { id: 'sfx-chime', label: 'Zen Chime', category: 'tranquil', url: '/audio/sfx/chime.mp3' }
+];
+
+export const AMBIANCE_LAYERS: SoundEffect[] = [
+    { id: 'amb-rain', label: 'Rain on Window', category: 'weather', url: '/audio/ambience/rain.mp3' },
+    { id: 'amb-forest', label: 'Deep Forest', category: 'nature', url: '/audio/ambience/forest.mp3' },
+    { id: 'amb-brown-noise', label: 'Brown Noise', category: 'ambient', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3' } // Fallback for now
+];
+
 export const audioService = {
     getTracks(): AmbientTrack[] {
         return AMBIENT_TRACKS;
@@ -46,6 +68,14 @@ export const audioService = {
 
     getTrackById(id: string): AmbientTrack | undefined {
         return AMBIENT_TRACKS.find(t => t.id === id);
+    },
+
+    getSFX(): SoundEffect[] {
+        return SOUND_EFFECTS;
+    },
+
+    getAmbiance(): SoundEffect[] {
+        return AMBIANCE_LAYERS;
     },
 
     /**

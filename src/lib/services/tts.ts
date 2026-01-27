@@ -1,5 +1,6 @@
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 import { getConfig, EnvironmentMode } from '../config/environment';
+import { analyticsService } from './analytics';
 
 let ttsClient: TextToSpeechClient | null = null;
 
@@ -51,7 +52,18 @@ export async function generateSpeech(text: string, envMode?: EnvironmentMode): P
     };
 
     try {
+        const startTime = Date.now();
         const [response] = await client.synthesizeSpeech(request);
+
+        // Log usage
+        await analyticsService.logUsage({
+            service: 'google-tts',
+            operation: 'speech-synthesis',
+            model: request.voice?.name || 'standard',
+            inputCount: text.length,
+            executionTimeMs: Date.now() - startTime,
+        }, envMode);
+
         return response.audioContent as Buffer;
     } catch (error) {
         console.error('[TTS Service] Speech synthesis error:', error);

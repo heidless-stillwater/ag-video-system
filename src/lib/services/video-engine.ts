@@ -15,6 +15,9 @@ export interface Scene {
     cueDescription: string;
     transitionType: 'fade' | 'blur' | 'zoom' | 'slide';
     transitionDuration: number;
+    sfxUrl?: string;
+    sfxVolume?: number;
+    narrationText?: string;
 }
 
 /**
@@ -58,7 +61,8 @@ export const videoEngine = {
                     duration: sectionDuration,
                     cueDescription: 'General section visualization',
                     transitionType: 'fade',
-                    transitionDuration: 1000
+                    transitionDuration: 1000,
+                    narrationText: section.content
                 });
             } else {
                 // Sort cues by timestamp
@@ -104,7 +108,10 @@ export const videoEngine = {
                         duration: Math.max(cueDuration, 0.1),
                         cueDescription: cue.description,
                         transitionType: cue.transitionType || 'fade',
-                        transitionDuration: cue.transitionDuration || 1000
+                        transitionDuration: cue.transitionDuration || 1000,
+                        sfxUrl: cue.sfxUrl,
+                        sfxVolume: cue.sfxVolume,
+                        narrationText: section.content
                     });
                 }
             }

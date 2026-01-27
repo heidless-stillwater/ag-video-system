@@ -45,6 +45,13 @@ export async function POST(
             projectId,
             scenes,
             project.backgroundMusicUrl,
+            project.backgroundMusicVolume || 0.2,
+            project.ambianceUrl,
+            project.ambianceVolume || 0.1,
+            project.narrationVolume || 1.0,
+            project.globalSfxVolume || 0.4,
+            project.subtitlesEnabled || false,
+            project.subtitleStyle || 'minimal',
             async (progress, message) => {
                 await updateProject(projectId, {
                     renderProgress: progress,

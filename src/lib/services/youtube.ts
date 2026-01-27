@@ -3,10 +3,12 @@ import { google, youtube_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { generateContent } from '@/lib/services/ai';
 import { Readable } from 'stream';
+import axios from 'axios';
 
 const SCOPES = [
     'https://www.googleapis.com/auth/youtube.upload',
-    'https://www.googleapis.com/auth/youtube.readonly'
+    'https://www.googleapis.com/auth/youtube.readonly',
+    'https://www.googleapis.com/auth/youtube.force-ssl'
 ];
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
@@ -130,11 +132,20 @@ export async function generateTopicSuggestions(broadTopic: string, envMode?: any
 
 export const youtubeService = {
     getOAuth2Client(): OAuth2Client {
-        return new google.auth.OAuth2(
-            process.env.YOUTUBE_CLIENT_ID,
-            process.env.YOUTUBE_CLIENT_SECRET,
-            process.env.NEXT_PUBLIC_YOUTUBE_REDIRECT_URI
-        );
+        const clientId = process.env.YOUTUBE_CLIENT_ID;
+        const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
+        const redirectUri = process.env.NEXT_PUBLIC_YOUTUBE_REDIRECT_URI;
+
+        if (!clientId || !clientSecret || !redirectUri) {
+            console.error('[YouTube Service] Missing OAuth2 configuration:', {
+                hasClientId: !!clientId,
+                hasClientSecret: !!clientSecret,
+                hasRedirectUri: !!redirectUri
+            });
+            throw new Error('YouTube OAuth2 configuration is incomplete.');
+        }
+
+        return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
     },
 
     getAuthUrl(state?: string): string {
@@ -201,12 +212,13 @@ export const youtubeService = {
     },
 
     async uploadVideo(
-        accessToken: string,
+        tokens: { accessToken: string; refreshToken: string },
         videoStream: Readable,
         metadata: { title: string; description: string; tags: string[] },
         privacy: 'public' | 'unlisted' | 'private' = 'unlisted',
         envMode?: any,
-        onProgress?: (progress: number) => void
+        onProgress?: (progress: number) => void,
+        thumbnailUrl?: string
     ) {
         const { getConfig } = require('../config/environment');
         const config = getConfig(envMode);
@@ -220,9 +232,13 @@ export const youtubeService = {
         }
 
         const client = this.getOAuth2Client();
-        client.setCredentials({ access_token: accessToken });
+        client.setCredentials({
+            access_token: tokens.accessToken,
+            refresh_token: tokens.refreshToken
+        });
         const youtube = google.youtube({ version: 'v3', auth: client });
 
+        console.log(`[YouTube Service] Inserting video: ${metadata.title}`);
         const response = await youtube.videos.insert({
             part: ['snippet', 'status'],
             requestBody: {
@@ -245,13 +261,72 @@ export const youtubeService = {
                 const mbUploaded = (evt.bytesRead / 1024 / 1024).toFixed(2);
                 console.log(`[YouTube Upload] Progress: ${mbUploaded} MB uploaded`);
 
-                // If we can't calculate percentage easily without total size, 
-                // we'll just pass a value that indicates it's moving
                 if (onProgress) {
                     onProgress(evt.bytesRead);
                 }
             }
         });
+
+        const videoId = response.data.id;
+
+        // Upload custom thumbnail if provided (with retry logic)
+        if (videoId && thumbnailUrl) {
+            console.log(`[YouTube Service] DETECTED custom thumbnail to upload: ${thumbnailUrl}`);
+
+            const maxRetries = 3;
+            let attempt = 0;
+            let success = false;
+
+            while (attempt < maxRetries && !success) {
+                attempt++;
+                try {
+                    // SAFETY: Wait for YouTube indexing (increasing duration with each attempt)
+                    const waitTime = 15000 * attempt;
+                    console.log(`[YouTube Service] Attempt ${attempt}: Waiting ${waitTime / 1000}s for video indexing...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+
+                    console.log(`[YouTube Service] Fetching thumbnail image: ${thumbnailUrl}`);
+                    const imageRes = await axios.get(thumbnailUrl, {
+                        responseType: 'arraybuffer',
+                        timeout: 15000
+                    });
+
+                    const imageBuffer = Buffer.from(imageRes.data);
+                    const sizeInMb = (imageBuffer.length / 1024 / 1024).toFixed(2);
+
+                    if (imageBuffer.length > 2 * 1024 * 1024) {
+                        throw new Error(`Thumbnail too large (${sizeInMb} MB). YouTube limit is 2 MB.`);
+                    }
+
+                    console.log(`[YouTube Service] Attempt ${attempt}: Sending thumbnails.set (ID: ${videoId}, Size: ${sizeInMb}MB)...`);
+                    const response = await youtube.thumbnails.set({
+                        videoId: videoId,
+                        media: {
+                            mimeType: 'image/jpeg',
+                            body: imageBuffer,
+                        },
+                    });
+
+                    console.log(`[YouTube Service] Thumbnail upload SUCCESS for video: ${videoId}. Status: ${response.status}`);
+                    success = true;
+                } catch (thumbError: any) {
+                    const errorMsg = thumbError.response ? JSON.stringify(thumbError.response.data) : thumbError.message;
+                    console.error(`[YouTube Service] Attempt ${attempt} FAILED:`, errorMsg);
+
+                    if (errorMsg.includes('forbidden') || errorMsg.includes('unverified')) {
+                        console.warn('[YouTube Service] Thumbnail upload FORBIDDEN. Likely unverified channel or lack of permissions.');
+                        // Don't retry if it's a permission/verification issue
+                        break;
+                    }
+
+                    if (attempt === maxRetries) {
+                        console.error(`[YouTube Service] Max retries reached. Thumbnail NOT uploaded for ${videoId}.`);
+                    } else {
+                        console.log(`[YouTube Service] Retrying in next attempt...`);
+                    }
+                }
+            }
+        }
 
         return response.data;
     }

@@ -25,6 +25,16 @@ export const Header = ({ initialMode }: HeaderProps) => {
             </div>
 
             <div className="flex items-center gap-4">
+                <Link
+                    href="/dashboard/health"
+                    className="p-2 text-white/40 hover:text-green-400 transition-colors"
+                    title="System Health"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </Link>
+                <div className="h-6 w-px bg-white/10"></div>
                 <EnvironmentSelector initialMode={initialMode} />
                 <div className="h-6 w-px bg-white/10"></div>
                 <AuthButton />

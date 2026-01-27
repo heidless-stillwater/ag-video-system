@@ -55,7 +55,7 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
     PRODUCTION: {
         mode: 'PRODUCTION',
         firebase: { useEmulators: false },
-        ai: { model: 'gemini-2.5-pro', maxTokens: 32000, limitAI: false },
+        ai: { model: 'gemini-1.5-pro-002', maxTokens: 32000, limitAI: false },
         tts: { voiceType: 'wavenet', speakingRate: 0.85 },
         video: { enabled: true, maxDurationMinutes: 180, resolution: '1080p' },
         storage: { useLocalStorage: false },

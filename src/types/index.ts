@@ -97,8 +97,31 @@ export interface Project {
     estimatedCost: number;
     backgroundMusicUrl?: string;
     backgroundMusicVolume?: number; // 0.0 to 1.0 (default 0.2)
+    ambianceUrl?: string;
+    ambianceVolume?: number; // 0.0 to 1.0 (default 0.1)
+    ambianceLabel?: string;
+    narrationVolume?: number; // 0.0 to 1.0 (default 1.0)
+    globalSfxVolume?: number; // 0.0 to 1.0 (default 0.4)
+    subtitlesEnabled?: boolean;
+    subtitleStyle?: 'minimal' | 'classic' | 'bold';
+    subtitleFont?: string;
+    thumbnailUrl?: string;
+    seoMetadata?: {
+        titles: string[];
+        description: string;
+        tags: string[];
+        selectedTitle?: string;
+    };
+    savedRenders?: SavedRender[];
     createdAt: Date;
     updatedAt: Date;
+}
+
+export interface SavedRender {
+    id: string;
+    url: string;
+    timestamp: Date;
+    label: string;
 }
 
 export interface ResearchData {
@@ -138,6 +161,7 @@ export interface Script {
     sleepFriendlinessScore: number; // 0-100
     createdAt: Date;
     updatedAt: Date;
+    thumbnailUrl?: string;
 }
 
 export interface ScriptSection {
@@ -163,6 +187,9 @@ export interface VisualCue {
     generatedAssetId?: string;
     transitionType?: 'fade' | 'blur' | 'zoom' | 'slide';
     transitionDuration?: number; // in milliseconds
+    sfxUrl?: string;
+    sfxVolume?: number;
+    sfxLabel?: string;
 }
 
 // ===== Media Asset Types =====
@@ -220,6 +247,22 @@ export interface VideoMetadata {
 }
 
 // ===== Analytics Types =====
+export interface UsageLog {
+    id?: string;
+    service: 'vertex-ai' | 'google-tts' | 'cloud-run' | 'render' | 'storage';
+    operation: 'script-generation' | 'image-generation' | 'video-generation' | 'speech-synthesis' | 'rendering';
+    model: string;
+    inputCount: number; // characters or tokens
+    outputCount?: number; // characters or tokens
+    estimatedCost: number;
+    executionTimeMs: number;
+    projectId?: string;
+    userId?: string;
+    metadata?: Record<string, any>;
+    timestamp: Date;
+    environment: 'DEV' | 'STAGING' | 'PRODUCTION';
+}
+
 export interface VideoAnalytics {
     videoId: string;
     youtubeId: string;

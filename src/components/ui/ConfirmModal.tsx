@@ -50,21 +50,21 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     if (!isMounted || !isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[200] overflow-y-auto flex items-center justify-center p-4 py-8">
             {/* Backdrop */}
             <div
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"
                 onClick={onClose}
             />
 
             {/* Modal Content */}
-            <div className="relative w-full max-w-md bg-slate-900 border border-slate-700/50 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="relative w-full max-w-md bg-slate-900 border border-slate-700/50 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
                 {/* Visual Accent */}
-                <div className={`absolute top-0 inset-x-0 h-1 ${isDestructive ? 'bg-red-500' : 'bg-blue-500'}`}></div>
+                <div className={`absolute top-0 inset-x-0 h-1 flex-shrink-0 ${isDestructive ? 'bg-red-500' : 'bg-blue-500'}`}></div>
 
-                <div className="p-8">
+                <div className="p-8 overflow-y-auto custom-scrollbar">
                     <div className="flex items-center gap-4 mb-4">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl ${isDestructive ? 'bg-red-500/10' : 'bg-blue-500/10'
+                        <div className={`w-12 h-12 rounded-2xl flex-shrink-0 flex items-center justify-center text-2xl ${isDestructive ? 'bg-red-500/10' : 'bg-blue-500/10'
                             }`}>
                             {isDestructive ? '⚠️' : '❓'}
                         </div>
@@ -75,7 +75,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                         {message}
                     </p>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 mt-auto">
                         <button
                             onClick={onClose}
                             disabled={isLoading}

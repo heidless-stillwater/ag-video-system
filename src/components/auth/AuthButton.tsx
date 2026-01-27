@@ -1,10 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { InlineConfirmButton } from '@/components/ui/InlineConfirmButton';
 
 export function AuthButton() {
     const { user, loading, signInWithGoogle, signOut } = useAuth();
+    const [isDisconnecting, setIsDisconnecting] = useState(false);
 
     if (loading) {
         return (
@@ -14,7 +16,7 @@ export function AuthButton() {
 
     const handleDisconnectYouTube = async () => {
         if (!user) return;
-        if (!confirm('Are you sure you want to disconnect your YouTube channel?')) return;
+        setIsDisconnecting(true);
 
         try {
             const response = await fetch('/api/auth/youtube/disconnect', {
@@ -26,10 +28,11 @@ export function AuthButton() {
             if (!response.ok) {
                 throw new Error('Failed to disconnect YouTube');
             }
-            // User state will update automatically via AuthContext onSnapshot
         } catch (error) {
             console.error('Error disconnecting YouTube:', error);
             alert('Failed to disconnect. Please try again.');
+        } finally {
+            setIsDisconnecting(false);
         }
     };
 
@@ -54,13 +57,13 @@ export function AuthButton() {
                                         {user.youtubeChannelInfo?.title || 'Linked'}
                                     </span>
                                 </div>
-                                <button
-                                    onClick={handleDisconnectYouTube}
-                                    className="text-[10px] text-gray-500 hover:text-white transition-colors"
-                                    title="Disconnect YouTube"
-                                >
-                                    (Disconnect)
-                                </button>
+                                <InlineConfirmButton
+                                    label="(Disconnect)"
+                                    confirmLabel="Confirm"
+                                    onConfirm={handleDisconnectYouTube}
+                                    isLoading={isDisconnecting}
+                                    className="text-[10px] text-gray-400 hover:text-white transition-colors underline decoration-dotted underline-offset-2"
+                                />
                             </div>
                         ) : (
                             <p className="text-xs text-gray-400 truncate max-w-[150px]">{user.email}</p>
@@ -73,6 +76,7 @@ export function AuthButton() {
                 >
                     Sign Out
                 </button>
+
             </div>
         );
     }

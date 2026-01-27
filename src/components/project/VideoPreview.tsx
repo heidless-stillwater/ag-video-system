@@ -7,14 +7,40 @@ interface VideoPreviewProps {
     scenes: Scene[];
     backgroundMusicUrl?: string;
     backgroundMusicVolume?: number;
+    ambianceUrl?: string;
+    ambianceVolume?: number;
+    narrationVolume?: number;
+    globalSfxVolume?: number;
+    subtitlesEnabled?: boolean;
+    subtitleStyle?: 'minimal' | 'classic' | 'bold';
     onClose: () => void;
+    onSaveAudioSettings?: (settings: {
+        narrationVolume: number;
+        backgroundMusicVolume: number;
+        ambianceVolume: number;
+        globalSfxVolume: number;
+    }) => Promise<void>;
+    isInline?: boolean;
 }
 
 /**
  * A cinematic, high-fidelity documentary previewer.
  * Supports customizable transitions: fade, blur, zoom, and slide.
  */
-export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMusicUrl, backgroundMusicVolume, onClose }) => {
+export const VideoPreview: React.FC<VideoPreviewProps> = ({
+    scenes,
+    backgroundMusicUrl,
+    backgroundMusicVolume,
+    ambianceUrl,
+    ambianceVolume,
+    narrationVolume = 1.0,
+    globalSfxVolume = 0.4,
+    subtitlesEnabled = true,
+    subtitleStyle = 'minimal',
+    onClose,
+    onSaveAudioSettings,
+    isInline = false
+}) => {
     const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLooping, setIsLooping] = useState(false);
@@ -23,9 +49,19 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const musicRef = useRef<HTMLAudioElement | null>(null);
     const sfxRef = useRef<HTMLAudioElement | null>(null);
+    const sceneSfxRef = useRef<HTMLAudioElement | null>(null);
+    const ambianceRef = useRef<HTMLAudioElement | null>(null);
     const [error, setAudioError] = useState<string | null>(null);
     const [isNarratorActuallyPlaying, setIsNarratorActuallyPlaying] = useState(false);
-    const [showOverlays, setShowOverlays] = useState(true);
+    const [showOverlays, setShowOverlays] = useState(false);
+    const [showMixer, setShowMixer] = useState(false);
+    const [isSavingAudio, setIsSavingAudio] = useState(false);
+
+    // Temporary audio levels (for live preview adjustment)
+    const [tempNarrationVol, setTempNarrationVol] = useState(narrationVolume);
+    const [tempMusicVol, setTempMusicVol] = useState(backgroundMusicVolume || 0.2);
+    const [tempAmbianceVol, setTempAmbianceVol] = useState(ambianceVolume || 0.1);
+    const [tempSfxVol, setTempSfxVol] = useState(globalSfxVolume);
 
     // Double Buffer State
     const [buffer, setBuffer] = useState<{
@@ -61,6 +97,14 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
     const currentScene = scenes[currentSceneIndex];
 
     const sectionId = currentScene?.sectionId;
+
+    const safePlay = (el: HTMLAudioElement | null, resetTime: boolean = false) => {
+        if (!el) return;
+        if (resetTime) el.currentTime = 0;
+        if (el.src && el.src !== window.location.href) {
+            el.play().catch(() => { });
+        }
+    };
 
     // Handle Time Update
     useEffect(() => {
@@ -108,14 +152,9 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
 
         // Wait for the new audio element to mount
         setTimeout(() => {
-            if (audioRef.current) {
-                audioRef.current.currentTime = 0;
-                audioRef.current.play().catch(console.error);
-            }
-            if (musicRef.current) {
-                musicRef.current.currentTime = 0;
-                musicRef.current.play().catch(console.error);
-            }
+            safePlay(audioRef.current, true);
+            safePlay(musicRef.current, true);
+            safePlay(ambianceRef.current, true);
         }, 50);
     };
 
@@ -128,7 +167,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
             setAbsoluteCurrentTime(scenes[nextIdx].startTime);
             if (isPlaying) {
                 setTimeout(() => {
-                    if (audioRef.current) audioRef.current.play().catch(console.error);
+                    safePlay(audioRef.current);
                 }, 50);
             }
         } else {
@@ -161,13 +200,41 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
 
         activeSectionIdRef.current = currentScene.sectionId;
 
-        // Transition SFX
-        if (isPlaying && sfxRef.current) {
+        // Transition SFX (The Chime)
+        // Only play the transition chime if there is pure silence (no specific scene SFX).
+        // If the user selected "Crackling Fire", we don't want a chime interrupting the mood.
+        if (isPlaying && sfxRef.current && !currentScene?.sfxUrl) {
             sfxRef.current.currentTime = 0;
-            sfxRef.current.volume = 0.15; // Subtle
-            sfxRef.current.play().catch(() => { });
+            // Use global SFX volume but scale it down for the chime so it's subtle, 
+            // but effectively mutable if the user turns SFX to 0.
+            sfxRef.current.volume = (tempSfxVol || 0) * 0.4;
+            safePlay(sfxRef.current);
         }
-    }, [currentSceneIndex, currentScene?.id]);
+
+        // Scene-Specific SFX (The AI Sound Design)
+        if (isPlaying && sceneSfxRef.current && currentScene?.sfxUrl) {
+            // Only update/restart if the source material has changed
+            // This allows continuous playback (looping) of "Rain" or "Fire" across multiple scenes
+            // without an abrupt cut/restart at the boundary.
+            const currentSrc = sceneSfxRef.current.getAttribute('src'); // using getAttribute for relative/absolute safety
+
+            if (currentSrc !== currentScene.sfxUrl && sceneSfxRef.current.src !== new URL(currentScene.sfxUrl, window.location.href).href) {
+                sceneSfxRef.current.src = currentScene.sfxUrl;
+                sceneSfxRef.current.loop = true; // Ensure short FX loop for long scenes
+                safePlay(sceneSfxRef.current);
+            } else if (sceneSfxRef.current.paused) {
+                // Resuming from pause
+                safePlay(sceneSfxRef.current);
+            }
+
+            // Always keep volume synced
+            sceneSfxRef.current.volume = tempSfxVol ?? 0.4;
+        } else if (sceneSfxRef.current && !currentScene?.sfxUrl) {
+            // Stop if no SFX for this scene
+            sceneSfxRef.current.pause();
+            sceneSfxRef.current.src = '';
+        }
+    }, [currentSceneIndex, currentScene?.id, isPlaying]);
 
     const handleImageLoad = () => {
         requestAnimationFrame(() => {
@@ -180,13 +247,16 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
 
     // Transport
     const togglePlayback = () => {
-        if (!audioRef.current) return;
         if (isPlaying) {
-            audioRef.current.pause();
+            audioRef.current?.pause();
             musicRef.current?.pause();
+            ambianceRef.current?.pause();
+            sceneSfxRef.current?.pause();
         } else {
-            audioRef.current.play().catch(() => setAudioError('Playback blocked. Tap to resume.'));
-            musicRef.current?.play().catch(console.error);
+            safePlay(audioRef.current);
+            safePlay(musicRef.current);
+            safePlay(ambianceRef.current);
+            safePlay(sceneSfxRef.current);
         }
         setIsPlaying(!isPlaying);
     };
@@ -213,7 +283,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
         if (audioRef.current && pendingSeekOffset !== null) {
             audioRef.current.currentTime = pendingSeekOffset;
             setPendingSeekOffset(null);
-            if (isPlaying) audioRef.current.play().catch(console.error);
+            if (isPlaying) safePlay(audioRef.current);
         }
     }, [currentScene.sectionId, pendingSeekOffset, isPlaying]);
 
@@ -258,158 +328,317 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
     };
 
     return (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-8 backdrop-blur-3xl select-none">
-            <button onClick={onClose} className="absolute top-8 right-8 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white z-50 border border-white/10">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
+        <div className={isInline
+            ? "w-full bg-[#020617] rounded-[40px] select-none border border-white/5 overflow-hidden"
+            : "fixed inset-0 z-[100] bg-[#020617] overflow-y-auto select-none custom-scrollbar"
+        }>
+            {!isInline && (
+                <button onClick={onClose} className="fixed top-8 right-8 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white z-[120] border border-white/10 backdrop-blur-md shadow-xl">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            )}
 
-            {/* Stage */}
-            <div onClick={togglePlayback} className="relative w-full max-w-5xl aspect-video rounded-[40px] overflow-hidden shadow-2xl bg-neutral-950 border border-white/5 cursor-pointer group">
+            <div className={isInline
+                ? "w-full flex flex-col items-center p-0 gap-6"
+                : "min-h-full w-full flex flex-col items-center py-12 px-8 gap-8"
+            }>
+                {/* Stage Wrapper */}
+                <div
+                    onClick={togglePlayback}
+                    className={`relative w-full ${isInline ? '' : 'max-w-5xl'} aspect-video rounded-[32px] overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.8)] bg-black border border-white/10 cursor-pointer group flex-shrink-0 @container`}
+                    style={{ containerType: 'inline-size' }}
+                >
 
-                {/* Layer A */}
-                <div {...getTransitionStyles(
-                    (buffer.active === 'A' && isImageReady) || (buffer.active === 'B' && !isImageReady),
-                    currentScene?.transitionType,
-                    currentScene?.transitionDuration
-                )}>
-                    {buffer.imgA && (
-                        <img
-                            src={buffer.imgA}
-                            onLoad={buffer.active === 'A' ? handleImageLoad : undefined}
-                            className={`w-full h-full object-cover transition-transform duration-[45000ms] ease-linear ${buffer.zoomA ? 'scale-110 translate-x-2' : 'scale-100'}`}
-                            alt=""
+                    {/* Layer A */}
+                    <div {...getTransitionStyles(
+                        (buffer.active === 'A' && isImageReady) || (buffer.active === 'B' && !isImageReady),
+                        currentScene?.transitionType,
+                        currentScene?.transitionDuration
+                    )}>
+                        {buffer.imgA && (
+                            <img
+                                src={buffer.imgA}
+                                onLoad={buffer.active === 'A' ? handleImageLoad : undefined}
+                                className={`w-full h-full object-cover transition-transform duration-[45000ms] ease-linear ${buffer.zoomA ? 'scale-110 translate-x-2' : 'scale-100'}`}
+                                alt=""
+                            />
+                        )}
+                    </div>
+
+                    {/* Layer B */}
+                    <div {...getTransitionStyles(
+                        (buffer.active === 'B' && isImageReady) || (buffer.active === 'A' && !isImageReady),
+                        currentScene?.transitionType,
+                        currentScene?.transitionDuration
+                    )}>
+                        {buffer.imgB && (
+                            <img
+                                src={buffer.imgB}
+                                onLoad={buffer.active === 'B' ? handleImageLoad : undefined}
+                                className={`w-full h-full object-cover transition-transform duration-[45000ms] ease-linear ${buffer.zoomB ? 'scale-110 translate-x-2' : 'scale-100'}`}
+                                alt=""
+                            />
+                        )}
+                    </div>
+
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent z-40 pointer-events-none"></div>
+
+                    {/* No interactive or debug overlays on video area */}
+
+                    {/* No interactive overlays on video area */}
+
+                    {/* Kinetic Typography Layer (Inside Stage) */}
+                    {subtitlesEnabled && currentScene?.narrationText && (
+                        <SubtitleOverlay
+                            text={currentScene.narrationText}
+                            styleType={subtitleStyle}
+                            isVisible={isPlaying}
                         />
                     )}
                 </div>
 
-                {/* Layer B */}
-                <div {...getTransitionStyles(
-                    (buffer.active === 'B' && isImageReady) || (buffer.active === 'A' && !isImageReady),
-                    currentScene?.transitionType,
-                    currentScene?.transitionDuration
-                )}>
-                    {buffer.imgB && (
-                        <img
-                            src={buffer.imgB}
-                            onLoad={buffer.active === 'B' ? handleImageLoad : undefined}
-                            className={`w-full h-full object-cover transition-transform duration-[45000ms] ease-linear ${buffer.zoomB ? 'scale-110 translate-x-2' : 'scale-100'}`}
-                            alt=""
-                        />
+                {/* Controls */}
+                <div className={`w-full ${isInline ? '' : 'max-w-5xl'} space-y-8 bg-white/[0.02] backdrop-blur-xl p-8 rounded-[32px] border border-white/5 shadow-2xl flex-shrink-0`}>
+                    {/* Technical Metadata Footer (Subtle) */}
+                    {showOverlays && (
+                        <div className="flex flex-col items-center gap-1 border-t border-white/5 pt-6 mt-4">
+                            <p className="text-[10px] font-medium text-white/10 uppercase tracking-[0.3em]">
+                                Technical Frame Data
+                            </p>
+                            <div className="flex items-center gap-4 opacity-[0.05] grayscale hover:opacity-20 transition-opacity">
+                                <p className="text-[9px] text-white tracking-widest">{currentScene?.sectionTitle}</p>
+                                <span className="w-1 h-1 rounded-full bg-white/20"></span>
+                                <p className="text-[9px] text-white tracking-widest">{currentScene?.cueDescription}</p>
+                                <span className="w-1 h-1 rounded-full bg-white/20"></span>
+                                <p className="text-[9px] text-white tracking-widest">{currentScene?.transitionType} ({currentScene?.transitionDuration}ms)</p>
+                            </div>
+                        </div>
                     )}
+                    <div className="group relative h-1 bg-white/10 rounded-full cursor-pointer" onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        seekTo(((e.clientX - rect.left) / rect.width) * totalDuration);
+                    }}>
+                        <div className="absolute h-full bg-blue-500 rounded-full" style={{ width: `${(absoluteCurrentTime / totalDuration) * 100}%` }}></div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                        <div className="text-white/40 font-mono text-xs">
+                            {Math.floor(absoluteCurrentTime / 60)}:{String(Math.floor(absoluteCurrentTime % 60)).padStart(2, '0')} / {Math.floor(totalDuration / 60)}:{String(Math.floor(totalDuration % 60)).padStart(2, '0')}
+                        </div>
+
+                        <div className="flex items-center gap-6">
+                            <button
+                                onClick={restart}
+                                className="text-white/40 hover:text-white transition-colors cursor-pointer"
+                                title="Rewind to Start"
+                            >
+                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                                </svg>
+                            </button>
+
+                            <button onClick={() => seekTo(absoluteCurrentTime - 10)} className="text-white/40 hover:text-white transition-colors cursor-pointer"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" /></svg></button>
+                            <button onClick={togglePlayback} className="w-14 h-14 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 transition-transform cursor-pointer">
+                                {isPlaying ? <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg> : <svg className="w-6 h-6 translate-x-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
+                            </button>
+                            <button onClick={() => seekTo(absoluteCurrentTime + 10)} className="text-white/40 hover:text-white transition-colors cursor-pointer"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zm8 0a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z" /></svg></button>
+
+                            <button
+                                onClick={() => setIsLooping(!isLooping)}
+                                className={`transition-colors cursor-pointer ${isLooping ? 'text-blue-400' : 'text-white/40 hover:text-white'}`}
+                                title={isLooping ? "Loop On" : "Loop Off"}
+                            >
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                            <button
+                                onClick={() => setShowOverlays(!showOverlays)}
+                                className={`p-2 rounded-lg transition-all ${showOverlays ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-white'}`}
+                                title={showOverlays ? "Hide Prompt Overlays" : "Show Prompt Overlays"}
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={() => setShowMixer(!showMixer)}
+                                className={`p-2 rounded-lg transition-all ${showMixer ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30' : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-white'}`}
+                                title={showMixer ? "Hide Audio Mixer" : "Show Audio Mixer"}
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                                </svg>
+                            </button>
+                            <div className="text-right min-w-[120px]">
+                                <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Scene {currentSceneIndex + 1} of {scenes.length}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Live Audio Mixer Panel */}
+                    {showMixer && (
+                        <div className="mt-6 p-6 bg-gradient-to-br from-purple-900/20 to-slate-900/40 border border-purple-500/20 rounded-2xl space-y-6">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-bold text-purple-300 uppercase tracking-widest flex items-center gap-2">
+                                    <span>🎚️</span> Master Audio Mixer
+                                </h3>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => {
+                                            setTempNarrationVol(narrationVolume);
+                                            setTempMusicVol(backgroundMusicVolume || 0.2);
+                                            setTempAmbianceVol(ambianceVolume || 0.1);
+                                            setTempSfxVol(globalSfxVolume);
+                                        }}
+                                        className="px-3 py-1.5 text-xs font-bold bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                                    >
+                                        Reset
+                                    </button>
+                                    {onSaveAudioSettings && (
+                                        <>
+                                            <button
+                                                onClick={async () => {
+                                                    setIsSavingAudio(true);
+                                                    try {
+                                                        await onSaveAudioSettings({
+                                                            narrationVolume: tempNarrationVol,
+                                                            backgroundMusicVolume: tempMusicVol,
+                                                            ambianceVolume: tempAmbianceVol,
+                                                            globalSfxVolume: tempSfxVol
+                                                        });
+                                                    } finally {
+                                                        setIsSavingAudio(false);
+                                                    }
+                                                }}
+                                                disabled={isSavingAudio}
+                                                className="px-4 py-1.5 text-xs font-bold bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-1.5"
+                                            >
+                                                {isSavingAudio ? (
+                                                    <>
+                                                        <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                                        Saving...
+                                                    </>
+                                                ) : (
+                                                    <>💾 Save Settings</>
+                                                )}
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Narration Volume */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">🎙️ Narration</label>
+                                        <span className="text-xs font-mono text-purple-400">{Math.round(tempNarrationVol * 100)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={tempNarrationVol}
+                                        onChange={(e) => setTempNarrationVol(parseFloat(e.target.value))}
+                                        className="w-full accent-purple-500"
+                                    />
+                                </div>
+
+                                {/* Background Music Volume */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">🎵 Background Music</label>
+                                        <span className="text-xs font-mono text-purple-400">{Math.round(tempMusicVol * 100)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={tempMusicVol}
+                                        onChange={(e) => setTempMusicVol(parseFloat(e.target.value))}
+                                        className="w-full accent-purple-500"
+                                    />
+                                </div>
+
+                                {/* Ambiance Volume */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">🌊 Ambiance</label>
+                                        <span className="text-xs font-mono text-purple-400">{Math.round(tempAmbianceVol * 100)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={tempAmbianceVol}
+                                        onChange={(e) => setTempAmbianceVol(parseFloat(e.target.value))}
+                                        className="w-full accent-purple-500"
+                                    />
+                                </div>
+
+                                {/* SFX Volume */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">🔊 Sound Effects</label>
+                                        <span className="text-xs font-mono text-purple-400">{Math.round(tempSfxVol * 100)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        value={tempSfxVol}
+                                        onChange={(e) => setTempSfxVol(parseFloat(e.target.value))}
+                                        className="w-full accent-purple-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <p className="text-[10px] text-slate-500 text-center italic">
+                                Adjust levels in real-time during playback. Click "Save Settings" to apply permanently.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* DEBUG SECTION */}
+                    <div className="mt-4 p-4 bg-black/40 rounded-2xl border border-white/5 text-[10px] font-mono text-white/30 grid grid-cols-4 gap-4">
+                        {scenes.slice(currentSceneIndex, currentSceneIndex + 4).map((s, i) => (
+                            <div key={i} className={i === 0 ? "text-blue-400" : ""}>
+                                Scene {currentSceneIndex + i + 1}: {s.transitionType || 'fade'} ({s.transitionDuration || 1000}ms)
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent z-40 pointer-events-none"></div>
-
-                {showOverlays && (
-                    <div className="absolute bottom-12 inset-x-0 text-center px-12 z-50 pointer-events-none transition-opacity duration-300">
-                        <p className="text-2xl font-semibold text-white/95 drop-shadow-2xl italic leading-relaxed tracking-wide">
-                            {currentScene?.sectionTitle}
-                        </p>
-                        <div className="flex items-center justify-center gap-3 mt-4">
-                            <p className="text-[10px] text-white/40 tracking-[0.4em] uppercase font-black">
-                                {currentScene?.cueDescription}
-                            </p>
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></span>
-                            <p className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded border border-blue-500/20">
-                                Transition: {currentScene?.transitionType || 'MISSING (fade)'} ({currentScene?.transitionDuration || 1000}ms)
-                            </p>
-                        </div>
-                    </div>
-                )}
-
-                {!isPlaying && (
-                    <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
-                        <div className="w-24 h-24 bg-white/10 backdrop-blur-2xl rounded-full flex items-center justify-center border border-white/20 shadow-2xl scale-110">
-                            <svg className="w-10 h-10 text-white translate-x-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                        </div>
-                    </div>
-                )}
+                {error && <div className="mt-4 px-6 py-2 bg-red-500/20 text-red-400 text-xs rounded-full border border-red-500/20">{error}</div>}
             </div>
 
-            {/* Controls */}
-            <div className="mt-8 w-full max-w-5xl space-y-8 bg-white/[0.02] backdrop-blur-xl p-8 rounded-[32px] border border-white/5 shadow-2xl">
-                <div className="group relative h-1 bg-white/10 rounded-full cursor-pointer" onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    seekTo(((e.clientX - rect.left) / rect.width) * totalDuration);
-                }}>
-                    <div className="absolute h-full bg-blue-500 rounded-full" style={{ width: `${(absoluteCurrentTime / totalDuration) * 100}%` }}></div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                    <div className="text-white/40 font-mono text-xs">
-                        {Math.floor(absoluteCurrentTime / 60)}:{String(Math.floor(absoluteCurrentTime % 60)).padStart(2, '0')} / {Math.floor(totalDuration / 60)}:{String(Math.floor(totalDuration % 60)).padStart(2, '0')}
-                    </div>
-
-                    <div className="flex items-center gap-6">
-                        <button
-                            onClick={restart}
-                            className="text-white/40 hover:text-white transition-colors cursor-pointer"
-                            title="Rewind to Start"
-                        >
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-                            </svg>
-                        </button>
-
-                        <button onClick={() => seekTo(absoluteCurrentTime - 10)} className="text-white/40 hover:text-white transition-colors cursor-pointer"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" /></svg></button>
-                        <button onClick={togglePlayback} className="w-14 h-14 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 transition-transform cursor-pointer">
-                            {isPlaying ? <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg> : <svg className="w-6 h-6 translate-x-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>}
-                        </button>
-                        <button onClick={() => seekTo(absoluteCurrentTime + 10)} className="text-white/40 hover:text-white transition-colors cursor-pointer"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zm8 0a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z" /></svg></button>
-
-                        <button
-                            onClick={() => setIsLooping(!isLooping)}
-                            className={`transition-colors cursor-pointer ${isLooping ? 'text-blue-400' : 'text-white/40 hover:text-white'}`}
-                            title={isLooping ? "Loop On" : "Loop Off"}
-                        >
-                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                        </button>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => setShowOverlays(!showOverlays)}
-                            className={`p-2 rounded-lg transition-all ${showOverlays ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-white'}`}
-                            title={showOverlays ? "Hide Prompt Overlays" : "Show Prompt Overlays"}
-                        >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                            </svg>
-                        </button>
-                        <div className="text-right min-w-[120px]">
-                            <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Scene {currentSceneIndex + 1} of {scenes.length}</span>
-                        </div>
-                    </div>
-                </div>
-
-                {/* DEBUG SECTION */}
-                <div className="mt-4 p-4 bg-black/40 rounded-2xl border border-white/5 text-[10px] font-mono text-white/30 grid grid-cols-4 gap-4">
-                    {scenes.slice(currentSceneIndex, currentSceneIndex + 4).map((s, i) => (
-                        <div key={i} className={i === 0 ? "text-blue-400" : ""}>
-                            Scene {currentSceneIndex + i + 1}: {s.transitionType || 'fade'} ({s.transitionDuration || 1000}ms)
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {error && <div className="mt-4 px-6 py-2 bg-red-500/20 text-red-400 text-xs rounded-full border border-red-500/20">{error}</div>}
-
-            <audio
-                ref={audioRef}
-                key={currentScene?.sectionId}
-                data-section-id={currentScene?.sectionId}
-                src={currentScene?.audioUrl}
-                onPlay={() => setIsNarratorActuallyPlaying(true)}
-                onPause={() => setIsNarratorActuallyPlaying(false)}
-                onEnded={() => {
-                    setIsNarratorActuallyPlaying(false);
-                    handleAudioEnded();
-                }}
-                onError={() => setAudioError('Audio streaming failed.')}
-            />
+            {currentScene?.audioUrl && (
+                <audio
+                    ref={audioRef}
+                    key={currentScene?.sectionId}
+                    data-section-id={currentScene?.sectionId}
+                    src={currentScene?.audioUrl}
+                    onPlay={() => {
+                        setIsNarratorActuallyPlaying(true);
+                        if (audioRef.current) audioRef.current.volume = tempNarrationVol;
+                    }}
+                    onPause={() => setIsNarratorActuallyPlaying(false)}
+                    onEnded={() => {
+                        setIsNarratorActuallyPlaying(false);
+                        handleAudioEnded();
+                    }}
+                    onError={() => setAudioError('Audio streaming failed.')}
+                />
+            )}
 
             {backgroundMusicUrl && (
                 <audio
@@ -417,33 +646,56 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({ scenes, backgroundMu
                     src={backgroundMusicUrl}
                     loop
                     onPlay={() => {
-                        console.log('[VideoPreview] Music playback started');
                         if (musicRef.current) {
                             musicRef.current.volume = isNarratorActuallyPlaying ?
-                                (backgroundMusicVolume || 0.2) * 0.3 :
-                                (backgroundMusicVolume || 0.2);
+                                (tempMusicVol ?? 0.2) * 0.3 :
+                                (tempMusicVol ?? 0.2);
                         }
                     }}
                     onError={(e) => {
                         const target = e.target as HTMLAudioElement;
-                        console.error('[VideoPreview] Music playback error:', target.error);
-                        setAudioError(`Music track failed to load: ${target.error?.message || 'Unsupported source'}`);
+                        const error = target.error;
+                        console.error(`[VideoPreview] Music playback error | Code: ${error?.code || '?'} | Msg: ${error?.message || 'None'} | URL: ${target.src}`);
+                        setAudioError(`Music track failed to load (Code ${error?.code || '?'})`);
                     }}
                 />
             )}
 
-            {/* Manual Ducking Control */}
+            {/* Manual Ducking Control (BGM only) */}
             <DuckingEffect
                 isNarratorPlaying={isNarratorActuallyPlaying}
                 musicRef={musicRef}
-                baseVolume={backgroundMusicVolume || 0.2}
+                baseVolume={tempMusicVol ?? 0.2}
             />
+
+            {/* Master Volume Sync Engine */}
+            <VolumeSync channel="Narration" refEl={audioRef} volume={tempNarrationVol} />
+            <VolumeSync channel="Ambiance" refEl={ambianceRef} volume={tempAmbianceVol ?? 0.1} />
+            <VolumeSync channel="SFX" refEl={sceneSfxRef} volume={tempSfxVol} />
+
             {/* Transition SFX */}
             <audio
                 ref={sfxRef}
-                src="https://cdn.pixabay.com/audio/2022/01/18/audio_823157fbe1.mp3" // Placeholder: "Short Calm Chime"
+                src="/audio/sfx/chime.mp3"
                 preload="auto"
             />
+            {/* Scene-Specific SFX Layer */}
+            <audio ref={sceneSfxRef} />
+
+            {/* Ambient Atmosphere Layer */}
+            {ambianceUrl && (
+                <audio
+                    ref={ambianceRef}
+                    src={ambianceUrl}
+                    loop
+                    onError={(e) => {
+                        const target = e.target as HTMLAudioElement;
+                        const error = target.error;
+                        console.error(`[VideoPreview] Ambiance playback error | Code: ${error?.code || '?'} | Msg: ${error?.message || 'None'} | URL: ${target.src}`);
+                        setAudioError(`Ambiance track failed to load (Code ${error?.code || '?'})`);
+                    }}
+                />
+            )}
         </div>
     );
 };
@@ -476,6 +728,80 @@ const DuckingEffect: React.FC<{
 
         return () => clearInterval(interval);
     }, [isNarratorPlaying, baseVolume, musicRef]);
+
+    return null;
+};
+
+const AmbianceSync: React.FC<{
+    ambianceRef: React.RefObject<HTMLAudioElement | null>;
+    volume: number
+}> = ({ ambianceRef, volume }) => {
+    return null;
+};
+
+const SubtitleOverlay: React.FC<{
+    text: string;
+    styleType: 'minimal' | 'classic' | 'bold';
+    isVisible: boolean;
+}> = ({ text, styleType, isVisible }) => {
+    const [displayText, setDisplayText] = useState('');
+    const [fade, setFade] = useState(false);
+
+    useEffect(() => {
+        setFade(false);
+        const timeout = setTimeout(() => {
+            setDisplayText(text);
+            setFade(true);
+        }, 150);
+        return () => clearTimeout(timeout);
+    }, [text]);
+
+    const getStyle = () => {
+        switch (styleType) {
+            case 'bold': return { fontSize: 'clamp(20px, 3.2cqw, 64px)', fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '-0.02em' };
+            case 'classic': return { fontSize: 'clamp(18px, 2.8cqw, 54px)', fontWeight: 500 };
+            default: return { fontSize: 'clamp(16px, 2.4cqw, 48px)', fontWeight: 300, letterSpacing: '0.05em', color: 'rgba(255,255,255,0.8)' };
+        }
+    };
+
+    const containerStyle: React.CSSProperties = {
+        position: 'absolute',
+        bottom: '4.5cqw',
+        left: 0,
+        right: 0,
+        display: 'flex',
+        justifyContent: 'center',
+        padding: '0 6cqw',
+        zIndex: 50,
+        transition: 'all 1000ms ease-out',
+        opacity: fade && isVisible ? 1 : 0,
+        transform: fade && isVisible ? 'translateY(0)' : 'translateY(1cqw)'
+    };
+
+    return (
+        <div style={containerStyle}>
+            <div style={{ maxWidth: '75cqw', textAlign: 'center' }}>
+                <p
+                    className="leading-relaxed drop-shadow-[0_0.1cqw_0.5cqw_rgba(0,0,0,0.8)]"
+                    style={getStyle()}
+                >
+                    {displayText}
+                </p>
+            </div>
+        </div>
+    );
+};
+
+const VolumeSync: React.FC<{
+    channel: string;
+    refEl: React.RefObject<HTMLAudioElement | null>;
+    volume: number;
+}> = ({ channel, refEl, volume }) => {
+    useEffect(() => {
+        if (!refEl.current) return;
+        console.log(`[VideoPreview] Syncing ${channel} volume to:`, volume);
+        refEl.current.volume = volume;
+    }, [volume, refEl]);
 
     return null;
 };

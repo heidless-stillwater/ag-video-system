@@ -1,4 +1,4 @@
-import { dbAdmin } from '../firebase-admin';
+import { db as dbAdmin } from '../firebase-admin';
 import { Topic, Project, Script, User } from '@/types';
 
 /**

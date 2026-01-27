@@ -1,6 +1,7 @@
 import { GoogleAuth } from 'google-auth-library';
 import { VertexAI, GenerativeModel } from '@google-cloud/vertexai';
 import { getConfig, getEnvironmentMode, EnvironmentMode } from '../config/environment';
+import { analyticsService } from './analytics';
 import path from 'path';
 import axios from 'axios';
 
@@ -64,7 +65,7 @@ export async function generateContent(prompt: string, overrideMode?: Environment
                     ]
                 });
             }
-            if (lowerPrompt.includes('visual "cues"') || lowerPrompt.includes('visual cues')) {
+            if (lowerPrompt.includes('art director') || lowerPrompt.includes('visual cue')) {
                 const titleMatch = prompt.match(/SECTION TITLE: (.*)/);
                 const title = titleMatch ? titleMatch[1] : 'Cinematic visualization';
                 const transitionTypes: ('fade' | 'blur' | 'zoom' | 'slide')[] = ['fade', 'blur', 'zoom', 'slide'];
@@ -130,21 +131,37 @@ export async function generateContent(prompt: string, overrideMode?: Environment
 - Rhythmic tides whisper to the shore in a timeless song.`;
     }
 
+    const startTime = Date.now();
+
     try {
         const client = getVertexAI();
+        console.log(`[AI Service] Calling Vertex AI with model: ${config.ai.model}...`);
         const model = client.getGenerativeModel({
             model: config.ai.model,
             generationConfig: {
                 maxOutputTokens: config.ai.maxTokens,
-                temperature: 0.2, // Low temperature for factual consistency
+                temperature: 0.2,
             }
         });
 
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        return response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } catch (error) {
-        console.error('Vertex AI error:', error);
+        const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        // Log usage
+        await analyticsService.logUsage({
+            service: 'vertex-ai',
+            operation: 'script-generation',
+            model: config.ai.model,
+            inputCount: prompt.length,
+            outputCount: text.length,
+            executionTimeMs: Date.now() - startTime,
+        }, mode);
+
+        return text;
+    } catch (error: any) {
+        console.error('[AI Service] Vertex AI Fatal error:', error.message);
+        if (error.stack) console.error(error.stack);
         throw error;
     }
 }
@@ -181,18 +198,17 @@ export async function generateDocumentaryScript(
         }
     `;
 
-    const response = await generateContent(prompt, envMode);
-
     try {
+        const response = await generateContent(prompt, envMode);
         const cleaned = response.replace(/```json/g, '').replace(/```/g, '').trim();
         return JSON.parse(cleaned);
-    } catch (error) {
-        console.error('Failed to parse script JSON, returning raw content as single section');
+    } catch (error: any) {
+        console.error('[AI Service] Failed to generate or parse script, returning fallback:', error.message);
         return {
             sections: [{
-                title: 'Full Script',
-                content: response,
-                wordCount: response.split(/\s+/).length
+                title: 'Story of ' + title,
+                content: `In the quiet of eons passed, ${title} emerged from the shadows of time. We journey through its vast landscapes and silent whispers...`,
+                wordCount: 25
             }]
         };
     }
@@ -276,9 +292,11 @@ export async function generateVisualCues(
 }
 
 export async function generateImage(prompt: string, envMode?: EnvironmentMode): Promise<Buffer | string> {
-    const config = getConfig(envMode);
+    const overrideMode = envMode || getEnvironmentMode();
+    const config = getConfig(overrideMode);
+    const startTime = Date.now();
 
-    console.log(`[generateImage] envMode: ${envMode}, config.ai.model: ${config.ai.model}`);
+    console.log(`[generateImage] envMode: ${overrideMode}, config.ai.model: ${config.ai.model}`);
 
     if (config.ai.model === 'mock') {
         const placeholders = [
@@ -287,15 +305,6 @@ export async function generateImage(prompt: string, envMode?: EnvironmentMode): 
             'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a',
             'https://images.unsplash.com/photo-1501785888041-af3ef285b470',
             'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1',
-            'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8',
-            'https://images.unsplash.com/photo-1441974231531-c6227db76b6e',
-            'https://images.unsplash.com/photo-1501854140801-50d01698950b',
-            'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d',
-            'https://images.unsplash.com/photo-1426604966848-d7adac402bff',
-            'https://images.unsplash.com/photo-1433086966358-54859d0ed716',
-            'https://images.unsplash.com/photo-1511497584788-876760111969',
-            'https://images.unsplash.com/photo-1502082553048-f009c37129b9',
-            'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa',
         ];
 
         const index = Math.floor(Math.random() * placeholders.length);
@@ -339,31 +348,94 @@ export async function generateImage(prompt: string, envMode?: EnvironmentMode): 
 
             if (typeof base64Data === 'string' && base64Data.length > 100) {
                 console.log(`[AI Service] Successfully synthesized real AI image via REST API`);
+
+                // Log usage
+                await analyticsService.logUsage({
+                    service: 'vertex-ai',
+                    operation: 'image-generation',
+                    model: 'imagen-3.0-generate-001',
+                    inputCount: prompt.length,
+                    outputCount: 1,
+                    executionTimeMs: Date.now() - startTime,
+                }, overrideMode);
+
                 return Buffer.from(base64Data, 'base64');
             }
         }
 
-        console.error('[AI Service] Malformed REST response structure:', JSON.stringify(response.data).substring(0, 500));
         throw new Error('Malformed or empty response from Vertex AI REST API');
 
     } catch (error: any) {
-        // Detailed error logging to see WHY Google is rejecting us
-        if (error.response?.data) {
-            console.error('[AI Service] Vertex AI REST API REJECTION:', JSON.stringify(error.response.data, null, 2));
-        } else {
-            console.error('[AI Service] Vertex AI REST API FATAL error:', error.message);
-        }
+        console.error('[AI Service] Image Gen Error:', error.message);
 
         // Fallback to randomized Unsplash if real AI fails in STAGING/PRODUCTION
         const placeholders = [
             'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b',
             'https://images.unsplash.com/photo-1506744038136-46273834b3fb',
-            'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a',
-            'https://images.unsplash.com/photo-1501785888041-af3ef285b470',
-            'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1',
         ];
         const index = Math.floor(Math.random() * placeholders.length);
         const randomSig = Math.floor(Math.random() * 1000000);
         return `${placeholders[index]}?auto=format&fit=crop&q=80&w=1000&sig=${randomSig}&err=api_fail`;
+    }
+}
+
+/**
+ * Analyzes a script to generate a cinematic thumbnail prompt for Imagen 3.0.
+ */
+export async function generateThumbnailPrompt(script: any, envMode?: EnvironmentMode): Promise<string> {
+    const prompt = `
+        You are an expert YouTube thumbnail designer for a cinematic documentary channel.
+        Analyze the following documentary script and create a single, high-impact visual description for a thumbnail.
+        
+        DOCUMENTARY TITLE: ${script.title}
+        SCRIPT SUMMARY: ${script.sections.map((s: any) => s.title).join(', ')}
+        
+        GOAL: Create a thumbnail that is:
+        1. Eye-catching and high-contrast
+        2. Highly atmospheric and sleep-calming (yet intriguing)
+        3. Focused on a single, powerful subject or landscape
+        4. Photorealistic and high-fidelity
+        
+        Provide only the visual description, no other text.
+    `;
+
+    try {
+        return await generateContent(prompt, envMode);
+    } catch (error: any) {
+        console.error('Failed to generate thumbnail prompt:', error.message);
+        return `A cinematic visualization of ${script.title}: atmospheric, high-fidelity, and sleep-inducing style.`;
+    }
+}
+
+/**
+ * Uses Gemini to generate optimized YouTube titles, description, and tags.
+ */
+export async function generateSEOMetadata(script: any, envMode?: EnvironmentMode): Promise<{ titles: string[], description: string, tags: string[] }> {
+    const prompt = `
+        You are a YouTube SEO expert specializing in highly-viral documentaries.
+        Analyze the following script and generate optimized metadata for a 4K documentary launch.
+
+        DOCUMENTARY TITLE: ${script.title}
+        SCRIPT CONTENT: ${script.sections.map((s: any) => s.content.substring(0, 300)).join('\n\n')}
+
+        REQUIRED OUTPUT (Strict JSON format):
+        {
+          "titles": ["Three distinct, high-click-through-rate titles that prioritize mystery and atmosphere"],
+          "description": "A 200+ word deep-dive description that includes internal keywords, timestamps for sections, and a calming call-to-action.",
+          "tags": ["15 relevant, high-traffic SEO tags"]
+        }
+    `;
+
+    try {
+        const response = await generateContent(prompt, envMode);
+        const cleaned = response.replace(/```json/g, '').replace(/```/g, '').trim();
+        return JSON.parse(cleaned);
+    } catch (error: any) {
+        console.error('Failed to generate or parse SEO metadata, returning fallback:', error.message);
+        return {
+            titles: [script.title, `${script.title} (Cinematic Documentary)`, `The Mystery of ${script.title}`],
+            description: `A calming exploration of ${script.title}.`,
+            tags: ["documentary", "sleep", "calming", script.title.toLowerCase()]
+        };
     }
 }

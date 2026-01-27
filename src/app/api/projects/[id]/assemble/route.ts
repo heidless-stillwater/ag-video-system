@@ -27,15 +27,32 @@ export async function POST(
         // 2. Comprehensive Readiness Check
         const totalSections = script.sections.length;
         const sectionsWithAudio = script.sections.filter(s => !!s.audioUrl).length;
-        const sectionsWithVisuals = script.sections.filter(s => s.visualCues && s.visualCues.length > 0).length;
 
-        if (sectionsWithAudio < totalSections || sectionsWithVisuals < totalSections) {
+        // Check that sections have visual cues AND those cues have URLs
+        const sectionsWithVisuals = script.sections.filter(s =>
+            s.visualCues &&
+            s.visualCues.length > 0 &&
+            s.visualCues.some(cue => cue.url && cue.url.length > 0)
+        ).length;
+
+        if (sectionsWithAudio < totalSections) {
             return NextResponse.json({
-                error: 'Project assets incomplete',
+                error: 'Audio generation incomplete',
                 details: {
                     sections: totalSections,
                     audioReady: sectionsWithAudio,
-                    visualsReady: sectionsWithVisuals
+                    message: `${totalSections - sectionsWithAudio} section(s) still need audio generation`
+                }
+            }, { status: 400 });
+        }
+
+        if (sectionsWithVisuals < totalSections) {
+            return NextResponse.json({
+                error: 'Visual assets incomplete',
+                details: {
+                    sections: totalSections,
+                    visualsReady: sectionsWithVisuals,
+                    message: `${totalSections - sectionsWithVisuals} section(s) still need visual assets (images)`
                 }
             }, { status: 400 });
         }

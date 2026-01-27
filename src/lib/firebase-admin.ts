@@ -55,8 +55,11 @@ if (!admin.apps.length) {
     }
 }
 
+import { getStorage } from 'firebase-admin/storage';
+
 // Named database instance
 // getFirestore('autovideo-db-0') works in firebase-admin v11.3+
 const dbAdmin = getFirestore('autovideo-db-0');
+const storage = getStorage();
 
-export { admin, dbAdmin };
+export { admin, dbAdmin as db, storage };

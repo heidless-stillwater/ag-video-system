@@ -7,17 +7,21 @@ import { projectService } from '@/lib/services/firestore';
 import { scriptService } from '@/lib/services/script';
 import { videoEngine, Scene } from '@/lib/services/video-engine';
 import { VideoPreview } from '@/components/project/VideoPreview';
-import { Project, ProjectStatus, Script, User } from '@/types';
+import { MP4Player } from '@/components/project/MP4Player';
+import { Project, ProjectStatus, Script, User, SavedRender } from '@/types';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { InlineConfirmButton } from '@/components/ui/InlineConfirmButton';
 import { useEnvironment } from '@/lib/hooks/useEnvironment';
-import { audioService, AMBIENT_TRACKS } from '@/lib/services/audio';
+import { AMBIENT_TRACKS, audioService, AMBIANCE_LAYERS, SOUND_EFFECTS } from '@/lib/services/audio';
 import { TimelineEditor } from '@/components/project/TimelineEditor';
 import { userService } from '@/lib/services/firestore';
 import { auth } from '@/lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { PublishModal } from '@/components/project/PublishModal';
+import { fetchUsageLogs } from '@/app/actions/analytics';
+import { UsageLog } from '@/types';
 
 export default function ProjectDetailPage() {
     const params = useParams();
@@ -29,6 +33,7 @@ export default function ProjectDetailPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isResearching, setIsResearching] = useState(false);
     const [isScripting, setIsScripting] = useState(false);
+    const [isSoundDesigning, setIsSoundDesigning] = useState(false);
     const [generatingAudioId, setGeneratingAudioId] = useState<string | null>(null);
     const [isGeneratingAllAudio, setIsGeneratingAllAudio] = useState(false);
     const [isGeneratingMedia, setIsGeneratingMedia] = useState(false);
@@ -44,8 +49,13 @@ export default function ProjectDetailPage() {
     const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
     const [publishMetadata, setPublishMetadata] = useState<{ title: string; description: string; tags: string[] } | null>(null);
     const [isPublishing, setIsPublishing] = useState(false);
+    const [isOptimizing, setIsOptimizing] = useState(false);
     const [isRendering, setIsRendering] = useState(false);
     const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+    const [isInlinePreviewActive, setIsInlinePreviewActive] = useState(false);
+    const [activeViewType, setActiveViewType] = useState<'preview' | 'mp4'>('preview');
+    const [costLogs, setCostLogs] = useState<UsageLog[]>([]);
+    const [projectCost, setProjectCost] = useState(0);
 
     // Step Confirmation State
     const [stepConfirm, setStepConfirm] = useState<{
@@ -80,9 +90,24 @@ export default function ProjectDetailPage() {
                 setProject(projectData);
 
                 // If the project has a script associated, load it
+                let scriptData = null;
                 if (projectData.currentScriptId) {
-                    const scriptData = await scriptService.getScript(projectData.currentScriptId);
+                    scriptData = await scriptService.getScript(projectData.currentScriptId);
                     setScript(scriptData);
+                }
+
+                // SELF-HEALING: Detect and repair broken Pixabay URLs
+                await repairLegacyAudio(projectData, scriptData);
+
+                // Fetch Cost Logs
+                if (currentUser) {
+                    const logs = await fetchUsageLogs(currentUser.id, 100, projectId);
+                    setCostLogs(logs);
+                    const total = logs.reduce((sum, log) => sum + (log.estimatedCost || 0), 0);
+                    setProjectCost(total);
+                }
+                if (projectData.downloadUrl) {
+                    setActiveViewType('mp4');
                 }
             } else {
                 setError('Project not found');
@@ -118,6 +143,9 @@ export default function ProjectDetailPage() {
                     // If finished, stop polling
                     if (!['rendering', 'generating_media', 'publishing'].includes(refreshedProject.status)) {
                         clearInterval(interval);
+                        if (refreshedProject.downloadUrl) {
+                            setActiveViewType('mp4');
+                        }
                         // If it became 'ready', 'assembling', or 'published', refresh everything
                         if (['ready', 'assembling', 'published'].includes(refreshedProject.status)) {
                             await loadProjectAndScript();
@@ -132,93 +160,229 @@ export default function ProjectDetailPage() {
         };
     }, [project?.status, projectId]);
 
+    const repairLegacyAudio = async (proj: Project, scr: Script | null) => {
+        let projectNeedsUpdate = false;
+        let scriptNeedsUpdate = false;
+
+        // 1. Repair Ambiance
+        if (proj.ambianceUrl?.includes('pixabay.com') || proj.ambianceUrl?.includes('soundbible.com')) {
+            console.log('[Self-Healing] Detected legacy ambiance URL. Migrating to local asset...');
+            const match = AMBIANCE_LAYERS.find(a => a.label === proj.ambianceLabel);
+            if (match) {
+                proj.ambianceUrl = match.url;
+                projectNeedsUpdate = true;
+            }
+        }
+
+        // 2. Repair SFX in Script
+        if (scr) {
+            scr.sections.forEach(section => {
+                section.visualCues?.forEach(cue => {
+                    if (cue.sfxUrl?.includes('pixabay.com') || cue.sfxUrl?.includes('soundbible.com')) {
+                        console.log('[Self-Healing] Detected legacy SFX URL. Migrating to local asset...');
+                        const match = SOUND_EFFECTS.find(s => s.label === cue.sfxLabel);
+                        if (match) {
+                            cue.sfxUrl = match.url;
+                            scriptNeedsUpdate = true;
+                        }
+                    }
+                });
+            });
+        }
+
+        // 3. Initialize Subtitles if missing
+        if (proj.subtitlesEnabled === undefined) {
+            console.log('[Self-Healing] Initializing subtitles and volumes.');
+            proj.subtitlesEnabled = true;
+            proj.subtitleStyle = 'minimal';
+            proj.narrationVolume = 1.0;
+            proj.globalSfxVolume = 0.4;
+            projectNeedsUpdate = true;
+        }
+
+        if (projectNeedsUpdate) {
+            await projectService.updateProject(proj.id, {
+                ambianceUrl: proj.ambianceUrl ?? null,
+                subtitlesEnabled: proj.subtitlesEnabled ?? true,
+                subtitleStyle: proj.subtitleStyle ?? 'minimal',
+                narrationVolume: proj.narrationVolume ?? 1.0,
+                globalSfxVolume: proj.globalSfxVolume ?? 0.4
+            } as any);
+        }
+        if (scriptNeedsUpdate && scr) {
+            await scriptService.updateScript(scr.id, { sections: scr.sections });
+        }
+    };
+
     const handleLaunchResearch = async () => {
         if (!project) return;
-        setIsResearching(true);
-        setError(null);
+        interceptAction(async () => {
+            setIsResearching(true);
+            setError(null);
+            try {
+                const response = await fetch('/api/research', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ projectId: project.id }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Research orchestration failed');
+                }
+
+                const result = await response.json();
+
+                const updates: Partial<Project> = {
+                    status: 'researching',
+                    research: {
+                        sources: result.sources,
+                        facts: result.facts,
+                        outline: [],
+                        completionPercentage: 100,
+                    }
+                };
+
+                await projectService.updateProject(project.id, updates);
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Research failed: ' + err.message);
+            } finally {
+                setIsResearching(false);
+            }
+        }, 'Launch AI Research?', 'This will use Gemini to research the topic and extract key facts. This consumes real Vertex AI AI quota.');
+    };
+
+    const handleGenerateSoundDesign = async () => {
+        if (!project || !script) return;
+        interceptAction(async () => {
+            setIsSoundDesigning(true);
+            setError(null);
+            try {
+                const response = await fetch(`/api/projects/${project.id}/sound-design`, {
+                    method: 'POST',
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Sound design failed');
+                }
+
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Sound design failed: ' + err.message);
+            } finally {
+                setIsSoundDesigning(false);
+            }
+        }, 'AI Sound Design?', 'This will analyze your script and generate contextual sound effects and ambiance layers.');
+    };
+
+    const handleAmbianceSelect = async (ambianceId: string) => {
+        if (!project) return;
+        const amb = AMBIANCE_LAYERS.find(a => a.id === ambianceId);
+        if (!amb) return;
 
         try {
-            const response = await fetch('/api/research', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ projectId: project.id }),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Research orchestration failed');
-            }
-
-            const result = await response.json();
-
-            const updates: Partial<Project> = {
-                status: 'researching',
-                research: {
-                    sources: result.sources,
-                    facts: result.facts,
-                    outline: [],
-                    completionPercentage: 100,
-                }
-            };
-
-            await projectService.updateProject(project.id, updates);
+            await projectService.updateProject(project.id, {
+                ambianceUrl: amb.url,
+                ambianceLabel: amb.label,
+                ambianceVolume: 0.1
+            } as any);
             await loadProjectAndScript();
         } catch (err: any) {
-            setError('Research failed: ' + err.message);
-        } finally {
-            setIsResearching(false);
+            setError('Failed to update ambiance: ' + err.message);
+        }
+    };
+
+    const handleVolumeChange = async (key: 'narrationVolume' | 'backgroundMusicVolume' | 'ambianceVolume' | 'globalSfxVolume', value: number) => {
+        if (!project) return;
+        try {
+            await projectService.updateProject(project.id, {
+                [key]: value
+            } as any);
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError(`Failed to update ${key}: ` + err.message);
+        }
+    };
+
+    const handleSubtitleToggle = async () => {
+        if (!project) return;
+        try {
+            // Default to true if currently undefined/null
+            const nextState = project.subtitlesEnabled === undefined ? false : !project.subtitlesEnabled;
+            await projectService.updateProject(project.id, {
+                subtitlesEnabled: nextState
+            } as any);
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Failed to toggle subtitles: ' + err.message);
+        }
+    };
+
+    const handleSubtitleStyleChange = async (style: 'minimal' | 'classic' | 'bold') => {
+        if (!project) return;
+        try {
+            await projectService.updateProject(project.id, {
+                subtitleStyle: style
+            } as any);
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Failed to change subtitle style: ' + err.message);
         }
     };
 
     const handleGenerateScript = async () => {
         if (!project) return;
-        setIsScripting(true);
-        setError(null);
+        interceptAction(async () => {
+            setIsScripting(true);
+            setError(null);
+            try {
+                const response = await fetch(`/api/projects/${project.id}/script`, {
+                    method: 'POST',
+                });
 
-        try {
-            const response = await fetch(`/api/projects/${project.id}/script`, {
-                method: 'POST',
-            });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Script generation failed');
+                }
 
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Script generation failed');
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Scripting failed: ' + err.message);
+            } finally {
+                setIsScripting(false);
             }
-
-            await loadProjectAndScript();
-        } catch (err: any) {
-            setError('Scripting failed: ' + err.message);
-        } finally {
-            setIsScripting(false);
-        }
+        }, 'Generate AI Script?', 'This will generate a sleep-optimized documentary script section by section. This is multiple real Gemini API calls.');
     };
 
     const handleGenerateAudio = async (sectionId: string) => {
         if (!project || !script) return;
-        setGeneratingAudioId(sectionId);
-        setError(null);
+        interceptAction(async () => {
+            setGeneratingAudioId(sectionId);
+            setError(null);
+            try {
+                const response = await fetch(`/api/projects/${project.id}/tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scriptId: script.id,
+                        sectionId,
+                    }),
+                });
 
-        try {
-            const response = await fetch(`/api/projects/${project.id}/tts`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    scriptId: script.id,
-                    sectionId,
-                }),
-            });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Audio generation failed');
+                }
 
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Audio generation failed');
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Audio failed: ' + err.message);
+            } finally {
+                setGeneratingAudioId(null);
             }
-
-            await loadProjectAndScript();
-        } catch (err: any) {
-            setError('Audio failed: ' + err.message);
-        } finally {
-            setGeneratingAudioId(null);
-        }
+        }, 'Generate AI Voice?', 'This will generate a narrator voice for this section using Google Cloud TTS. This is a real API call.');
     };
 
     const handleGenerateAllAudio = async () => {
@@ -259,31 +423,28 @@ export default function ProjectDetailPage() {
 
     const handleGenerateMedia = async () => {
         if (!project || !script) return;
-        setIsGeneratingMedia(true);
-        setError(null);
+        interceptAction(async () => {
+            setIsGeneratingMedia(true);
+            setError(null);
+            try {
+                const response = await fetch(`/api/projects/${project.id}/media`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scriptId: script.id }),
+                });
 
-        console.log('[Client] Starting media generation');
-        console.log('[Client] Current environment mode:', envMode);
-        console.log('[Client] Current config:', envConfig);
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Media generation failed');
+                }
 
-        try {
-            const response = await fetch(`/api/projects/${project.id}/media`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ scriptId: script.id }),
-            });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Media generation failed');
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Media failed: ' + err.message);
+            } finally {
+                setIsGeneratingMedia(false);
             }
-
-            await loadProjectAndScript();
-        } catch (err: any) {
-            setError('Media failed: ' + err.message);
-        } finally {
-            setIsGeneratingMedia(false);
-        }
+        }, 'Generate AI Media?', 'This will use Imagen 3.0 to generate a unique image for every scene in the script. This is multiple real AI API calls.');
     };
 
     const handleAssemble = async () => {
@@ -306,7 +467,9 @@ export default function ProjectDetailPage() {
             // Calculate timeline and open preview
             const calcedTimeline = videoEngine.calculateTimeline(script);
             setTimeline(calcedTimeline);
-            setIsPreviewOpen(true);
+            setIsInlinePreviewActive(true);
+            setActiveViewType('preview');
+            setIsPreviewOpen(false); // Ensure full-screen is closed
 
             await loadProjectAndScript();
         } catch (err: any) {
@@ -341,15 +504,76 @@ export default function ProjectDetailPage() {
 
     const handleResetToAssembling = async () => {
         if (!project) return;
-        setIsLoading(true); // Short loading state for transition
+        setIsLoading(true);
         try {
             await projectService.updateProject(project.id, {
                 status: 'assembling',
-                downloadUrl: null as any // Using any to bypass strict type if needed, but null is fine for Firestore
+                downloadUrl: null as any,
+                renderProgress: 0,
+                renderMessage: ''
             });
             await loadProjectAndScript();
         } catch (err: any) {
             setError('Failed to reset project: ' + err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleSnapshotAndReset = async (label: string = 'Auto-Saved Version') => {
+        if (!project || !project.downloadUrl) return;
+
+        setIsLoading(true);
+        try {
+            // 1. Physical Archival on Server
+            const archiveRes = await fetch(`/api/projects/${project.id}/archive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label })
+            });
+
+            if (!archiveRes.ok) throw new Error('Failed to archive file on server');
+            const { archiveUrl, archiveId } = await archiveRes.json();
+
+            // 2. Metadata Persistence in Firestore
+            const newSnapshot: SavedRender = {
+                id: archiveId,
+                url: archiveUrl,
+                timestamp: new Date(),
+                label: label || `Render ${new Date().toLocaleTimeString()}`
+            };
+
+            const updatedSavedRenders = [newSnapshot, ...(project.savedRenders || [])];
+
+            await projectService.updateProject(project.id, {
+                status: 'assembling',
+                downloadUrl: null as any,
+                renderProgress: 0,
+                renderMessage: '',
+                savedRenders: updatedSavedRenders
+            });
+
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Failed to archive render: ' + err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleLoadSavedRender = async (render: SavedRender) => {
+        if (!project) return;
+        setIsLoading(true);
+        try {
+            await projectService.updateProject(project.id, {
+                downloadUrl: render.url,
+                status: 'ready',
+                renderProgress: 100,
+                renderMessage: `Restored: ${render.label}`
+            });
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Failed to load saved render: ' + err.message);
         } finally {
             setIsLoading(false);
         }
@@ -366,6 +590,21 @@ export default function ProjectDetailPage() {
             await loadProjectAndScript();
         } catch (err: any) {
             setError('Failed to revert status: ' + err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleKillRender = async () => {
+        if (!project) return;
+
+        setIsLoading(true);
+        try {
+            const res = await fetch(`/api/projects/${project.id}/kill`, { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to kill render process');
+            await loadProjectAndScript();
+        } catch (err: any) {
+            setError('Failed to kill render: ' + err.message);
         } finally {
             setIsLoading(false);
         }
@@ -454,45 +693,69 @@ export default function ProjectDetailPage() {
 
     const handleRegenerateCueImage = async (sectionId: string, cueId: string, prompt: string) => {
         if (!project || !script) return;
+        interceptAction(async () => {
+            try {
+                const response = await fetch(`/api/projects/${project.id}/media/regenerate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scriptId: script.id,
+                        sectionId,
+                        cueId,
+                        prompt
+                    }),
+                });
 
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Regeneration failed');
+                }
+
+                const data = await response.json();
+
+                // Update local script state with the new URL returned from API
+                const updatedSections = script.sections.map(s => {
+                    if (s.id === sectionId && s.visualCues) {
+                        return {
+                            ...s,
+                            visualCues: s.visualCues.map(c =>
+                                c.id === cueId ? { ...c, url: data.url, status: 'ready' as const } : c
+                            )
+                        };
+                    }
+                    return s;
+                });
+
+                const updatedScript = { ...script, sections: updatedSections };
+                setScript(updatedScript);
+            } catch (err: any) {
+                setError('Regeneration failed: ' + err.message);
+            }
+        }, 'Regenerate Scene Image?', 'This will consume Imagen 3.0 quota to generate a new custom image for this specific scene.');
+    };
+
+    const handleDisconnectYouTube = async () => {
+        if (!currentUser) return;
+        setIsConnectingYouTube(true);
         try {
-            const response = await fetch(`/api/projects/${project.id}/media/regenerate`, {
+            const response = await fetch('/api/auth/youtube/disconnect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    scriptId: script.id,
-                    sectionId,
-                    cueId,
-                    prompt
-                }),
+                body: JSON.stringify({ uid: currentUser.id })
             });
 
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Regeneration failed');
-            }
+            if (!response.ok) throw new Error('Failed to disconnect');
 
-            const data = await response.json();
-
-            // Update local script state with the new URL returned from API
-            const updatedSections = script.sections.map(s => {
-                if (s.id === sectionId && s.visualCues) {
-                    return {
-                        ...s,
-                        visualCues: s.visualCues.map(c =>
-                            c.id === cueId ? { ...c, url: data.url, status: 'ready' as const } : c
-                        )
-                    };
-                }
-                return s;
-            });
-
-            const updatedScript = { ...script, sections: updatedSections };
-            setScript(updatedScript);
+            // Success - project data will refresh via loadProjectAndScript
+            console.log('[Project Page] YouTube disconnected successfully');
+            await loadProjectAndScript();
         } catch (err: any) {
-            setError('Regeneration failed: ' + err.message);
+            setError('Failed to disconnect YouTube: ' + err.message);
+        } finally {
+            setIsConnectingYouTube(false);
         }
     };
+
 
     const handleConnectYouTube = async () => {
         if (!currentUser) return;
@@ -515,6 +778,18 @@ export default function ProjectDetailPage() {
 
     const handleOpenPublishModal = async () => {
         if (!project || !script) return;
+
+        // Use existing SEO metadata if available
+        if (project.seoMetadata) {
+            setPublishMetadata({
+                title: project.seoMetadata.selectedTitle || project.seoMetadata.titles[0],
+                description: project.seoMetadata.description,
+                tags: project.seoMetadata.tags
+            });
+            setIsPublishModalOpen(true);
+            return;
+        }
+
         setIsGeneratingMetadata(true);
         setError(null);
         try {
@@ -551,10 +826,10 @@ export default function ProjectDetailPage() {
 
             const data = await response.json();
             if (data.success) {
-                setPublishedUrl(data.youtubeUrl);
-                setIsPublishModalOpen(false);
+                // Keep modal open to show progress
                 await loadProjectAndScript();
-            } else {
+            }
+            else {
                 throw new Error(data.error || 'Publishing failed');
             }
         } catch (err: any) {
@@ -562,6 +837,38 @@ export default function ProjectDetailPage() {
         } finally {
             setIsPublishing(false);
         }
+    };
+
+    const handleOptimizeViral = async () => {
+        if (!project || !script) return;
+        interceptAction(async () => {
+            setIsOptimizing(true);
+            try {
+                const res = await fetch(`/api/projects/${project.id}/viral-suite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scriptId: script.id })
+                });
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to optimize for viral growth');
+                }
+                const data = await res.json();
+
+                // Update local state with new metadata
+                setPublishMetadata({
+                    title: data.seoMetadata.titles[0],
+                    description: data.seoMetadata.description,
+                    tags: data.seoMetadata.tags
+                });
+
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Viral Suite Error: ' + err.message);
+            } finally {
+                setIsOptimizing(false);
+            }
+        }, 'Viral Suite Optimize?', 'This will use Gemini and Imagen to generate optimized SEO metadata and a cinematic custom thumbnail.');
     };
 
     if (isLoading) {
@@ -655,6 +962,19 @@ export default function ProjectDetailPage() {
                                     {isConnectingYouTube ? <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></span> : '📺 Connect YouTube'}
                                 </button>
                             )}
+
+                        </div>
+                    </div>
+                    {/* Cost Breakdown Bar (New) */}
+                    <div className="max-w-7xl mx-auto px-4 pb-4">
+                        <div className="bg-white/5 border border-white/10 rounded-lg p-3 flex items-center justify-between text-xs">
+                            <span className="text-white/60 font-mono uppercase tracking-wider">Estimated Project Cost</span>
+                            <div className="flex items-center gap-4 font-mono">
+                                <span className="text-blue-300">Script: ${costLogs.filter(l => l.operation === 'script-generation').reduce((s, l) => s + l.estimatedCost, 0).toFixed(4)}</span>
+                                <span className="text-purple-300">Media: ${costLogs.filter(l => l.operation === 'image-generation').reduce((s, l) => s + l.estimatedCost, 0).toFixed(4)}</span>
+                                <span className="text-orange-300">Render: ${costLogs.filter(l => l.operation === 'rendering').reduce((s, l) => s + l.estimatedCost, 0).toFixed(4)}</span>
+                                <span className="text-green-400 font-bold border-l border-white/10 pl-4">Total: ${projectCost.toFixed(4)}</span>
+                            </div>
                         </div>
                     </div>
                     <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -702,6 +1022,78 @@ export default function ProjectDetailPage() {
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                             {/* Left Column: Research & Content */}
                             <div className="lg:col-span-2 space-y-8">
+                                {/* NEW: Cinematic Viewing Window */}
+                                {(project.downloadUrl || isInlinePreviewActive) && (
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-xl font-black uppercase tracking-widest text-white/90 flex items-center gap-3">
+                                                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                                                Viewing Window
+                                            </h3>
+
+                                            <div className="flex items-center gap-4">
+                                                {project.downloadUrl && (
+                                                    <div className="flex bg-slate-800/50 p-1 rounded-xl border border-slate-700/50">
+                                                        <button
+                                                            onClick={() => setActiveViewType('preview')}
+                                                            className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeViewType === 'preview' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                                        >
+                                                            Real-time Preview
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setActiveViewType('mp4')}
+                                                            className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all ${activeViewType === 'mp4' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                                        >
+                                                            Rendered MP4
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {isInlinePreviewActive && !project.downloadUrl && (
+                                                    <button
+                                                        onClick={() => setIsInlinePreviewActive(false)}
+                                                        className="text-[10px] font-bold text-slate-500 hover:text-white uppercase tracking-widest transition-colors"
+                                                    >
+                                                        Close Preview
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="w-full">
+                                            {project.downloadUrl && activeViewType === 'mp4' ? (
+                                                <MP4Player
+                                                    url={project.downloadUrl}
+                                                    title={project.title}
+                                                />
+                                            ) : (
+                                                <VideoPreview
+                                                    isInline={true}
+                                                    scenes={timeline}
+                                                    backgroundMusicUrl={project.backgroundMusicUrl}
+                                                    backgroundMusicVolume={project.backgroundMusicVolume}
+                                                    ambianceUrl={project.ambianceUrl}
+                                                    ambianceVolume={project.ambianceVolume}
+                                                    narrationVolume={project.narrationVolume}
+                                                    globalSfxVolume={project.globalSfxVolume}
+                                                    subtitlesEnabled={project.subtitlesEnabled || false}
+                                                    subtitleStyle={project.subtitleStyle || 'minimal'}
+                                                    onClose={() => setIsInlinePreviewActive(false)}
+                                                    onSaveAudioSettings={async (settings) => {
+                                                        await projectService.updateProject(project.id, {
+                                                            narrationVolume: settings.narrationVolume,
+                                                            backgroundMusicVolume: settings.backgroundMusicVolume,
+                                                            ambianceVolume: settings.ambianceVolume,
+                                                            globalSfxVolume: settings.globalSfxVolume
+                                                        } as any);
+                                                        await loadProjectAndScript();
+                                                    }}
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Status Card */}
                                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 overflow-hidden relative group">
                                     <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/5 rounded-full blur-[80px] -mr-32 -mt-32 group-hover:bg-blue-600/10 transition-all duration-700"></div>
@@ -744,6 +1136,142 @@ export default function ProjectDetailPage() {
                                             ))}
                                         </div>
                                     </div>
+
+                                    {/* AI Sound Designer */}
+                                    {(project.status === 'scripting' || project.status === 'generating_media' || project.status === 'assembling' || project.status === 'ready') && script && (
+                                        <div className="bg-slate-800/50 rounded-2xl border border-white/5 p-6 mb-8 max-w-2xl relative overflow-hidden group/sfx">
+                                            <div className="absolute top-0 right-0 w-32 h-32 bg-teal-500/5 rounded-full blur-[40px] -mr-16 -mt-16 group-hover/sfx:bg-teal-500/10 transition-all duration-700"></div>
+                                            <div className="flex items-center justify-between mb-4">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xl">🎻</span>
+                                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">AI Sound Designer</h3>
+                                                </div>
+                                                {project.ambianceUrl && (
+                                                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-teal-500/10 border border-teal-500/20 rounded-md">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
+                                                        <span className="text-[10px] font-bold text-teal-400 uppercase tracking-widest">{project.ambianceLabel || 'Custom Ambiance'}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mb-6 leading-relaxed">
+                                                Orchestrate contextual sound effects (SFX) and atmospheric layers based on your visual cues.
+                                            </p>
+
+                                            <div className="space-y-4">
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    {AMBIANCE_LAYERS.map(amb => (
+                                                        <button
+                                                            key={amb.id}
+                                                            onClick={() => handleAmbianceSelect(amb.id)}
+                                                            className={`p-3 rounded-xl border transition-all text-left flex flex-col gap-1 ${project.ambianceUrl === amb.url
+                                                                ? 'bg-teal-600/20 border-teal-500 shadow-lg shadow-teal-500/10'
+                                                                : 'bg-slate-900/50 border-slate-700 hover:border-slate-500'
+                                                                }`}
+                                                        >
+                                                            <div className="flex items-center justify-between">
+                                                                <span className={`text-xs font-bold leading-tight ${project.ambianceUrl === amb.url ? 'text-teal-400' : 'text-white'}`}>{amb.label}</span>
+                                                                {project.ambianceUrl === amb.url && <span className="w-2 h-2 rounded-full bg-teal-500"></span>}
+                                                            </div>
+                                                            <span className="text-[10px] text-slate-500 leading-tight capitaliz">{amb.category} Ambiance</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+
+                                                <button
+                                                    onClick={() => interceptAction(
+                                                        handleGenerateSoundDesign,
+                                                        'Run AI Sound Design?',
+                                                        'Gemini will analyze your visual scenes and assign the most appropriate sound effects from our curated library.'
+                                                    )}
+                                                    disabled={isSoundDesigning}
+                                                    className={`w-full py-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 ${project.ambianceUrl
+                                                        ? 'bg-slate-700 hover:bg-slate-600 text-teal-400 border border-teal-500/20'
+                                                        : 'bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-500/10'}`}
+                                                >
+                                                    {isSoundDesigning ? (
+                                                        <>
+                                                            <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                                            <span>Scoring Documentary...</span>
+                                                        </>
+                                                    ) : (
+                                                        <span>{project.ambianceUrl ? '🤖 Re-orchestrate SFX with Gemini' : '🎻 Orchestrate AI Sound Design'}</span>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Master Audio Mixer */}
+                                    {(project.status === 'scripting' || project.status === 'generating_media' || project.status === 'assembling' || project.status === 'ready') && (
+                                        <div className="bg-slate-800/50 rounded-2xl border border-white/5 p-6 mb-8 max-w-2xl relative overflow-hidden group/mixer">
+                                            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-[40px] -mr-16 -mt-16 group-hover/mixer:bg-blue-500/10 transition-all duration-700"></div>
+                                            <div className="flex items-center gap-2 mb-6">
+                                                <span className="text-xl">🎚️</span>
+                                                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Master Audio Mixer</h3>
+                                            </div>
+
+                                            <div className="space-y-6">
+                                                {[
+                                                    { id: 'narrationVolume', label: '🎙️ Narration', value: project.narrationVolume ?? 1.0 },
+                                                    { id: 'backgroundMusicVolume', label: '🎵 Music', value: project.backgroundMusicVolume ?? 0.2 },
+                                                    { id: 'ambianceVolume', label: '🌧️ Ambiance', value: project.ambianceVolume ?? 0.1 },
+                                                    { id: 'globalSfxVolume', label: '🔥 Scene SFX', value: project.globalSfxVolume ?? 0.4 }
+                                                ].map(channel => (
+                                                    <div key={channel.id} className="space-y-2">
+                                                        <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest">
+                                                            <span className="text-slate-400">{channel.label}</span>
+                                                            <span className="text-blue-400">{Math.round(channel.value * 100)}%</span>
+                                                        </div>
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="1"
+                                                            step="0.05"
+                                                            value={channel.value}
+                                                            onChange={(e) => handleVolumeChange(channel.id as any, parseFloat(e.target.value))}
+                                                            className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400 transition-all"
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Kinetic Typography (Subtitles) */}
+                                    {(project.status === 'scripting' || project.status === 'generating_media' || project.status === 'assembling' || project.status === 'ready') && script && (
+                                        <div className="bg-slate-800/50 rounded-2xl border border-white/5 p-6 mb-8 max-w-2xl relative overflow-hidden group/sub">
+                                            <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-[40px] -mr-16 -mt-16 group-hover/sub:bg-amber-500/10 transition-all duration-700"></div>
+                                            <div className="flex items-center justify-between mb-4">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xl">📝</span>
+                                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Kinetic Typography</h3>
+                                                </div>
+                                                <button
+                                                    onClick={handleSubtitleToggle}
+                                                    className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${project.subtitlesEnabled ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' : 'bg-slate-900 text-slate-500 border border-slate-700'}`}
+                                                >
+                                                    {project.subtitlesEnabled ? 'Enabled' : 'Disabled'}
+                                                </button>
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">
+                                                Burn-in professional, sleep-optimized subtitles into your final rendering.
+                                            </p>
+
+                                            <div className="flex gap-2">
+                                                {(['minimal', 'classic', 'bold'] as const).map(style => (
+                                                    <button
+                                                        key={style}
+                                                        onClick={() => handleSubtitleStyleChange(style)}
+                                                        className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase transition-all border ${project.subtitleStyle === style || (!project.subtitleStyle && style === 'minimal')
+                                                            ? 'bg-amber-500/10 border-amber-500 text-amber-500'
+                                                            : 'bg-slate-900 border-slate-800 text-slate-500 hover:border-slate-700'}`}
+                                                    >
+                                                        {style}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div className="flex gap-4">
                                         {project.status === 'draft' && (
@@ -847,43 +1375,96 @@ export default function ProjectDetailPage() {
                                         )}
 
                                         {(project.status === 'assembling' || project.status === 'review') && !project.downloadUrl && (
-                                            <button
-                                                onClick={handleRender}
-                                                disabled={isRendering}
-                                                className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-2xl font-bold shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 flex items-center gap-3"
-                                            >
-                                                {isRendering ? (
-                                                    <>
-                                                        <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
-                                                        <span>Initializing...</span>
-                                                    </>
-                                                ) : (
-                                                    <span>🎞️ Render MP4 Video</span>
+                                            <div className="flex flex-col gap-6 w-full max-w-2xl">
+                                                <button
+                                                    onClick={handleRender}
+                                                    disabled={isRendering}
+                                                    className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-2xl font-bold shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+                                                >
+                                                    {isRendering ? (
+                                                        <>
+                                                            <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                                            <span>Initializing...</span>
+                                                        </>
+                                                    ) : (
+                                                        <span>🎞️ Render MP4 Video</span>
+                                                    )}
+                                                </button>
+
+                                                {/* Saved Renders Library */}
+                                                {project.savedRenders && project.savedRenders.length > 0 && (
+                                                    <div className="bg-slate-900/50 border border-white/5 rounded-2xl p-6 space-y-4">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <span className="text-sm font-black text-slate-500 uppercase tracking-[0.2em]">📦 Saved Renders Archive</span>
+                                                        </div>
+                                                        <div className="grid gap-2">
+                                                            {project.savedRenders.map((render) => (
+                                                                <div key={render.id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5 hover:border-blue-500/30 transition-all group">
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-sm font-bold text-white">{render.label}</span>
+                                                                        <span className="text-[10px] text-slate-500 font-medium">{new Date(render.timestamp).toLocaleString()}</span>
+                                                                    </div>
+                                                                    <div className="flex gap-2">
+                                                                        <a
+                                                                            href={render.url}
+                                                                            target="_blank"
+                                                                            className="p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400 hover:text-white"
+                                                                            title="Preview file"
+                                                                        >
+                                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                                                        </a>
+                                                                        <button
+                                                                            onClick={() => handleLoadSavedRender(render)}
+                                                                            className="px-4 py-1.5 bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                                                                        >
+                                                                            Load This Version
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
                                                 )}
-                                            </button>
+                                            </div>
                                         )}
 
                                         {project.status === 'rendering' && (
-                                            <div className="flex-1 max-w-xl bg-slate-800/40 border border-blue-500/20 rounded-2xl p-6 relative overflow-hidden group">
-                                                <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-700 shadow-[0_0_10px_rgba(37,99,235,0.5)]" style={{ width: `${project.renderProgress || 0}%` }}></div>
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="relative">
-                                                            <div className="w-5 h-5 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
-                                                            <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-sm animate-pulse"></div>
+                                            <div className="flex-1 flex gap-4 max-w-2xl">
+                                                <div className="flex-1 bg-slate-800/40 border border-blue-500/20 rounded-2xl p-6 relative overflow-hidden group">
+                                                    <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-blue-600 to-cyan-400 transition-all duration-700 shadow-[0_0_10px_rgba(37,99,235,0.5)]" style={{ width: `${project.renderProgress || 0}%` }}></div>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="relative">
+                                                                <div className="w-5 h-5 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
+                                                                <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-sm animate-pulse"></div>
+                                                            </div>
+                                                            <span className="text-sm font-black text-white uppercase tracking-widest">{project.renderProgress === 100 ? 'Finalizing...' : 'Baking High-Quality MP4...'}</span>
                                                         </div>
-                                                        <span className="text-sm font-black text-white uppercase tracking-widest">{project.renderProgress === 100 ? 'Finalizing...' : 'Baking High-Quality MP4...'}</span>
+                                                        <div className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-md">
+                                                            <span className="text-xs font-mono font-bold text-blue-400">{project.renderProgress || 0}%</span>
+                                                        </div>
                                                     </div>
-                                                    <div className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-md">
-                                                        <span className="text-xs font-mono font-bold text-blue-400">{project.renderProgress || 0}%</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Current Step:</span>
+                                                        <p className="text-[10px] text-blue-200/70 font-medium italic animate-pulse">
+                                                            {project.renderMessage || 'Processing documentary segments...'}
+                                                        </p>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Current Step:</span>
-                                                    <p className="text-[10px] text-blue-200/70 font-medium italic animate-pulse">
-                                                        {project.renderMessage || 'Processing documentary segments...'}
-                                                    </p>
-                                                </div>
+
+                                                <button
+                                                    onClick={() => setStepConfirm({
+                                                        isOpen: true,
+                                                        title: '🛑 TERMINATE BAKE?',
+                                                        message: 'EXTREME ACTION: This will forcibly terminate ALL server-side render processes and reset the project status. Any progress on the current MP4 will be lost. Continue?',
+                                                        onConfirm: handleKillRender
+                                                    })}
+                                                    className="px-6 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 rounded-2xl text-xs font-black uppercase tracking-tighter transition-all flex flex-col items-center justify-center gap-2 group whitespace-nowrap"
+                                                    title="Kill all render processes and reset project"
+                                                >
+                                                    <span className="text-lg group-hover:scale-125 transition-transform">🔴</span>
+                                                    <span>Terminate Bake</span>
+                                                </button>
                                             </div>
                                         )}
 
@@ -895,6 +1476,30 @@ export default function ProjectDetailPage() {
                                             >
                                                 <span>⬇️ Download MP4 Movie</span>
                                             </a>
+                                        )}
+
+                                        {project.status === 'publishing' && (
+                                            <div className="flex-1 max-w-xl bg-slate-800/40 border border-red-500/20 rounded-2xl p-6 relative overflow-hidden group">
+                                                <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-red-600 to-red-500 transition-all duration-700 shadow-[0_0_10px_rgba(239,68,68,0.5)]" style={{ width: `${project.publishProgress || 0}%` }}></div>
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="relative">
+                                                            <div className="w-5 h-5 border-2 border-red-500/20 border-t-red-500 rounded-full animate-spin"></div>
+                                                            <div className="absolute inset-0 bg-red-500/10 rounded-full blur-sm animate-pulse"></div>
+                                                        </div>
+                                                        <span className="text-sm font-black text-white uppercase tracking-widest">{project.publishProgress === 100 ? 'Finalizing...' : 'Publishing to YouTube...'}</span>
+                                                    </div>
+                                                    <div className="px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded-md">
+                                                        <span className="text-xs font-mono font-bold text-red-400">{project.publishProgress || 0}%</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Broadcast:</span>
+                                                    <p className="text-[10px] text-red-200/70 font-medium italic animate-pulse">
+                                                        {project.publishMessage || 'Preparing video for broadcast...'}
+                                                    </p>
+                                                </div>
+                                            </div>
                                         )}
 
                                         {(project.status === 'assembling' || project.status === 'review' || project.status === 'published' || project.status === 'ready') && currentUser?.settings.youtubeConnected && (
@@ -918,17 +1523,31 @@ export default function ProjectDetailPage() {
                                         )}
 
                                         {project.status === 'ready' && (
-                                            <button
-                                                onClick={() => setStepConfirm({
-                                                    isOpen: true,
-                                                    title: 'Re-edit Documentary?',
-                                                    message: 'This will move the project back to the Assembling phase. The current MP4 download will be cleared until you render again. Continue?',
-                                                    onConfirm: handleResetToAssembling
-                                                })}
-                                                className="px-8 py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-bold transition-all border border-slate-700 flex items-center gap-3"
-                                            >
-                                                <span>🔄 Re-edit Documentary</span>
-                                            </button>
+                                            <div className="flex gap-4">
+                                                <button
+                                                    onClick={() => setStepConfirm({
+                                                        isOpen: true,
+                                                        title: '📦 ARCHIVE & RE-EDIT?',
+                                                        message: 'This will save your current MP4 to the "Saved Renders" library and take you back to the Assembly phase. You can reload this video at any time. Continue?',
+                                                        onConfirm: () => handleSnapshotAndReset('Snapshot before Re-edit')
+                                                    })}
+                                                    className="px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-bold transition-all shadow-lg shadow-blue-500/20 flex items-center gap-3"
+                                                >
+                                                    <span>📦 Save Version & Re-edit</span>
+                                                </button>
+
+                                                <button
+                                                    onClick={() => setStepConfirm({
+                                                        isOpen: true,
+                                                        title: '🗑️ DISCARD & RE-EDIT?',
+                                                        message: 'This will move the project back to the Assembling phase and CLEAR the current MP4 download. Use this if the current render is not worth saving. Continue?',
+                                                        onConfirm: handleResetToAssembling
+                                                    })}
+                                                    className="px-8 py-4 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-2xl font-bold transition-all border border-slate-700 flex items-center gap-3"
+                                                >
+                                                    <span>🔄 Discard & Re-edit</span>
+                                                </button>
+                                            </div>
                                         )}
 
                                         {project.status === 'published' && (
@@ -946,13 +1565,21 @@ export default function ProjectDetailPage() {
                                         )}
 
                                         {currentUser?.settings.youtubeConnected && (project.status === 'assembling' || project.status === 'review' || project.status === 'published' || project.status === 'ready' || project.status === 'rendering') && (
-                                            <button
-                                                onClick={handleConnectYouTube}
-                                                disabled={isConnectingYouTube}
-                                                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors flex items-center gap-2"
-                                            >
-                                                <span>🔄 Switch YouTube Account</span>
-                                            </button>
+                                            <div className="flex items-center gap-4">
+                                                <button
+                                                    onClick={handleConnectYouTube}
+                                                    disabled={isConnectingYouTube}
+                                                    className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors flex items-center gap-2"
+                                                >
+                                                    <span>🔄 Switch Account</span>
+                                                </button>
+                                                <InlineConfirmButton
+                                                    label={<span>🚫 Disconnect</span>}
+                                                    onConfirm={handleDisconnectYouTube}
+                                                    isLoading={isConnectingYouTube}
+                                                    className="px-4 py-2 text-xs font-bold text-red-400/60 hover:text-red-400 transition-colors flex items-center gap-2 border-l border-slate-800"
+                                                />
+                                            </div>
                                         )}
                                     </div>
                                 </div>
@@ -1177,9 +1804,14 @@ export default function ProjectDetailPage() {
                     onClose={() => setIsPublishModalOpen(false)}
                     initialMetadata={publishMetadata}
                     onConfirm={handleConfirmPublish}
+                    onOptimize={handleOptimizeViral}
+                    isOptimizing={isOptimizing}
+                    thumbnailUrl={project.thumbnailUrl}
                     isPublishing={isPublishing || project.status === 'publishing'}
                     publishProgress={project.publishProgress}
                     publishMessage={project.publishMessage}
+                    status={project.status}
+                    youtubeUrl={project.youtubeUrl}
                 />
 
                 {publishedUrl && (
@@ -1210,16 +1842,6 @@ export default function ProjectDetailPage() {
                             </div>
                         </div>
                     </div>
-                )}
-
-                {/* Cinematic Preview Overlay */}
-                {isPreviewOpen && timeline.length > 0 && (
-                    <VideoPreview
-                        scenes={timeline}
-                        backgroundMusicUrl={project.backgroundMusicUrl}
-                        backgroundMusicVolume={project.backgroundMusicVolume}
-                        onClose={() => setIsPreviewOpen(false)}
-                    />
                 )}
 
                 {project && (
