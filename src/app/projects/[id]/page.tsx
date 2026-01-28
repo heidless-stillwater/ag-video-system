@@ -26,6 +26,7 @@ import { fetchUsageLogs } from '@/app/actions/analytics';
 import { UsageLog, ViralClip } from '@/types';
 import { ViralShortsManager } from '@/components/shorts/ViralShortsManager';
 import { MOCK_USER } from '@/lib/auth/mockUser';
+import { MasteringBooth } from '@/components/project/MasteringBooth';
 
 export default function ProjectDetailPage() {
     const params = useParams();
@@ -495,12 +496,18 @@ export default function ProjectDetailPage() {
         }
     };
 
-    const handleVolumeChange = async (key: 'narrationVolume' | 'backgroundMusicVolume' | 'ambianceVolume' | 'globalSfxVolume', value: number) => {
+    const handleVolumeChange = async (key: 'narrationVolume' | 'backgroundMusicVolume' | 'ambianceVolume' | 'globalSfxVolume' | 'autoDucking', value: number | boolean) => {
         if (!project) return;
         try {
-            await projectService.updateProject(project.id, {
-                [key]: value
-            } as any);
+            const updates: any = { [key]: value };
+            if (key === 'autoDucking') {
+                updates.audioSettings = {
+                    ...project.audioSettings,
+                    autoDucking: value as boolean,
+                    masterVolume: project.audioSettings?.masterVolume ?? 1.0
+                };
+            }
+            await projectService.updateProject(project.id, updates);
             await loadProjectAndScript();
         } catch (err: any) {
             setError(`Failed to update ${key}: ` + err.message);
@@ -569,6 +576,7 @@ export default function ProjectDetailPage() {
                     body: JSON.stringify({
                         scriptId: script.id,
                         sectionId,
+                        voiceProfile: project?.voiceProfile || script.voiceProfile || 'standard'
                     }),
                 });
 
@@ -586,16 +594,41 @@ export default function ProjectDetailPage() {
         }, 'Generate AI Voice?', 'This will generate a narrator voice for this section using Google Cloud TTS. This is a real API call.');
     };
 
+    const handleUpdateVoiceProfile = async (profile: Project['voiceProfile']) => {
+        if (!project) return;
+
+        // Optimistic Update
+        const updatedProject = { ...project, voiceProfile: profile };
+        setProject(updatedProject);
+        if (script) {
+            setScript({ ...script, voiceProfile: profile });
+        }
+
+        try {
+            await projectService.updateProject(project.id, { voiceProfile: profile });
+            // Also update current script's voice profile if needed
+            if (script) {
+                await scriptService.updateScript(script.id, { voiceProfile: profile });
+            }
+            // Background refresh
+            loadProjectAndScript();
+        } catch (err: any) {
+            setError('Failed to update voice profile: ' + err.message);
+            // Revert on error would be ideal, but for now we'll just reload
+            loadProjectAndScript();
+        }
+    };
+
     const handleGenerateAllAudio = async () => {
         if (!project || !script) return;
         setIsGeneratingAllAudio(true);
         setError(null);
 
         try {
-            // Find all sections that don't have audio yet
-            const pendingSections = script.sections.filter(s => !s.audioUrl);
+            // Process all sections to ensure voice consistency
+            const sectionsToRender = script.sections;
 
-            for (const section of pendingSections) {
+            for (const section of sectionsToRender) {
                 setGeneratingAudioId(section.id);
                 const response = await fetch(`/api/projects/${project.id}/tts`, {
                     method: 'POST',
@@ -603,6 +636,7 @@ export default function ProjectDetailPage() {
                     body: JSON.stringify({
                         scriptId: script.id,
                         sectionId: section.id,
+                        voiceProfile: project?.voiceProfile || script.voiceProfile || 'standard'
                     }),
                 });
 
@@ -1536,13 +1570,19 @@ export default function ProjectDetailPage() {
                                                     globalSfxVolume={project.globalSfxVolume}
                                                     subtitlesEnabled={project.subtitlesEnabled || false}
                                                     subtitleStyle={project.subtitleStyle || 'minimal'}
+                                                    autoDucking={project.audioSettings?.autoDucking ?? true}
                                                     onClose={() => setIsInlinePreviewActive(false)}
                                                     onSaveAudioSettings={async (settings) => {
                                                         await projectService.updateProject(project.id, {
                                                             narrationVolume: settings.narrationVolume,
                                                             backgroundMusicVolume: settings.backgroundMusicVolume,
                                                             ambianceVolume: settings.ambianceVolume,
-                                                            globalSfxVolume: settings.globalSfxVolume
+                                                            globalSfxVolume: settings.globalSfxVolume,
+                                                            audioSettings: {
+                                                                ...project.audioSettings,
+                                                                autoDucking: settings.autoDucking,
+                                                                masterVolume: project.audioSettings?.masterVolume ?? 1.0
+                                                            }
                                                         } as any);
                                                         await loadProjectAndScript();
                                                     }}
@@ -1714,6 +1754,20 @@ export default function ProjectDetailPage() {
                                                         />
                                                     </div>
                                                 ))}
+
+                                                {/* Auto-Ducking Toggle */}
+                                                <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                                                    <div className="flex flex-col gap-1">
+                                                        <span className="text-[10px] font-bold text-white uppercase tracking-widest">Intelligent Ducking</span>
+                                                        <span className="text-[9px] text-slate-500 uppercase tracking-tighter">Auto-dip music during narration</span>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleVolumeChange('autoDucking', !(project.audioSettings?.autoDucking ?? true))}
+                                                        className={`w-12 h-6 rounded-full p-1 transition-all duration-300 ${project.audioSettings?.autoDucking ?? true ? 'bg-blue-600' : 'bg-slate-700'}`}
+                                                    >
+                                                        <div className={`w-4 h-4 bg-white rounded-full transition-all duration-300 ${project.audioSettings?.autoDucking ?? true ? 'translate-x-6' : 'translate-x-0'}`} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
@@ -2087,125 +2141,16 @@ export default function ProjectDetailPage() {
                                     </div>
                                 </div>
 
-                                {/* Script Sections (Visible if status is scripting or generating_media) */}
-                                {(project.status === 'scripting' || project.status === 'generating_media' || project.status === 'assembling') && script && (
-                                    <div className="space-y-6">
-                                        <div className="flex items-center justify-between">
-                                            <h3 className="text-xl font-bold flex items-center gap-2">
-                                                <span className="text-purple-400">📝</span> Documentary Script Sections
-                                            </h3>
-                                            {script.sections.some(s => !s.audioUrl) && (
-                                                <button
-                                                    onClick={() => interceptAction(
-                                                        handleGenerateAllAudio,
-                                                        'Generate All Pending Audio?',
-                                                        'This will sequentially generate audio for all sections using Google Cloud TTS. In STAGING mode, these are multiple real API calls.'
-                                                    )}
-                                                    disabled={isGeneratingAllAudio}
-                                                    className="px-4 py-2 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 border border-purple-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50"
-                                                >
-                                                    {isGeneratingAllAudio ? (
-                                                        <>
-                                                            <span className="w-3 h-3 border-2 border-purple-400/20 border-t-purple-400 rounded-full animate-spin"></span>
-                                                            <span>Generating All...</span>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <span>🎙️ Generate All Audio</span>
-                                                        </>
-                                                    )}
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="space-y-4">
-                                            {script.sections.map((section, idx) => (
-                                                <div key={section.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-colors">
-                                                    <div className="flex justify-between items-start mb-4">
-                                                        <div>
-                                                            <h4 className="font-bold text-slate-200">
-                                                                Section {idx + 1}: {section.title}
-                                                            </h4>
-                                                            <div className="flex items-center gap-4 text-xs text-slate-500 mt-1">
-                                                                <span>{section.wordCount} words</span>
-                                                                <span>{Math.floor(section.estimatedDuration / 60)}m {section.estimatedDuration % 60}s</span>
-                                                            </div>
-                                                        </div>
-
-                                                        {section.audioUrl ? (
-                                                            <div className="flex flex-col items-end gap-2">
-                                                                <span className="text-[10px] text-green-400 font-bold uppercase tracking-wider bg-green-400/10 px-2 py-0.5 rounded">Audio Ready</span>
-                                                                <audio
-                                                                    src={section.audioUrl}
-                                                                    controls
-                                                                    className="h-8 max-w-[200px] opacity-80 hover:opacity-100 transition-opacity"
-                                                                />
-                                                            </div>
-                                                        ) : (
-                                                            <button
-                                                                onClick={() => interceptAction(
-                                                                    () => handleGenerateAudio(section.id),
-                                                                    'Generate Audio for Section?',
-                                                                    `This will use Google Cloud TTS to generate audio for "${section.title}". In STAGING mode, this is a real API call.`
-                                                                )}
-                                                                disabled={generatingAudioId === section.id}
-                                                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 border border-slate-700"
-                                                            >
-                                                                {generatingAudioId === section.id ? (
-                                                                    <>
-                                                                        <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
-                                                                        <span>Generating...</span>
-                                                                    </>
-                                                                ) : (
-                                                                    <>
-                                                                        <span>🎙️ Generate Audio</span>
-                                                                    </>
-                                                                )}
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                    <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap mb-6">
-                                                        {section.content}
-                                                    </p>
-
-                                                    {/* Visual Cues Gallery */}
-                                                    {section.visualCues && section.visualCues.length > 0 && (
-                                                        <div className="space-y-4">
-                                                            <h5 className="text-[10px] font-bold text-teal-500 uppercase tracking-widest px-1">Visual Assets</h5>
-                                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                                                {section.visualCues.map((cue) => (
-                                                                    <div key={cue.id} className="relative aspect-video rounded-xl overflow-hidden bg-slate-800 border border-slate-700 group/cue">
-                                                                        {cue.url ? (
-                                                                            <>
-                                                                                <img
-                                                                                    src={cue.url}
-                                                                                    alt={cue.description}
-                                                                                    className="w-full h-full object-cover transition-transform duration-500 group-hover/cue:scale-110"
-                                                                                />
-                                                                                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-transparent opacity-0 group-hover/cue:opacity-100 transition-opacity p-3 flex flex-col justify-end">
-                                                                                    <div className="flex items-center gap-1.5 mb-1">
-                                                                                        <span className="text-[7px] font-bold uppercase tracking-widest px-1 py-0.5 bg-blue-500/30 text-blue-200 rounded border border-blue-500/20">
-                                                                                            {cue.transitionType || 'fade'}
-                                                                                        </span>
-                                                                                        <span className="text-[7px] text-slate-400">{cue.transitionDuration || 1200}ms</span>
-                                                                                    </div>
-                                                                                    <p className="text-[8px] text-slate-200 line-clamp-2 leading-tight">{cue.description}</p>
-                                                                                </div>
-                                                                            </>
-                                                                        ) : (
-                                                                            <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center">
-                                                                                <div className={`w-2 h-2 rounded-full mb-2 ${cue.status === 'generating' ? 'bg-teal-500 animate-pulse' : 'bg-slate-600'}`}></div>
-                                                                                <p className="text-[8px] text-slate-500 font-medium leading-tight">{cue.description.substring(0, 30)}...</p>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
+                                {project.status !== 'draft' && project.status !== 'researching' && script && (
+                                    <MasteringBooth
+                                        project={project}
+                                        script={script}
+                                        isGenerating={isGeneratingAllAudio || !!generatingAudioId}
+                                        generatingId={generatingAudioId}
+                                        onRegenerateLine={handleGenerateAudio}
+                                        onRegenerateAll={handleGenerateAllAudio}
+                                        onUpdateVoiceProfile={handleUpdateVoiceProfile}
+                                    />
                                 )}
 
                                 {/* Research Sections */}

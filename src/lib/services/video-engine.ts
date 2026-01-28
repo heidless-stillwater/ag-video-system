@@ -17,6 +17,7 @@ export interface Scene {
     transitionDuration: number;
     sfxUrl?: string;
     sfxVolume?: number;
+    sfxOffset?: number;
     narrationText?: string;
 }
 
@@ -111,6 +112,7 @@ export const videoEngine = {
                         transitionDuration: cue.transitionDuration || 1000,
                         sfxUrl: cue.sfxUrl,
                         sfxVolume: cue.sfxVolume,
+                        sfxOffset: cue.sfxOffset,
                         narrationText: section.content
                     });
                 }

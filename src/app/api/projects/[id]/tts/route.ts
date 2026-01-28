@@ -15,7 +15,7 @@ export async function POST(
     const { id: projectId } = await params;
 
     try {
-        const { scriptId, sectionId } = await req.json();
+        const { scriptId, sectionId, voiceProfile } = await req.json();
 
         if (!scriptId || !sectionId) {
             return NextResponse.json({ error: 'scriptId and sectionId are required' }, { status: 400 });
@@ -37,8 +37,13 @@ export async function POST(
         const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
         console.log(`[TTS API] Environment Mode detected: ${envMode || 'DEFAULT'}`);
 
-        console.log(`[TTS API] Generating speech for section: ${section.title}`);
-        const audioBuffer = await generateSpeech(section.content, envMode);
+        console.log(`[TTS API] Generating speech for section: ${section.title} using profile: ${voiceProfile || script.voiceProfile || 'standard'}`);
+        const audioBuffer = await generateSpeech(
+            section.content,
+            envMode,
+            script.languageCode || 'en-US',
+            voiceProfile || script.voiceProfile || 'standard'
+        );
 
         // 3. Upload to Firebase Storage
         console.log(`[TTS API] Uploading audio to storage...`);

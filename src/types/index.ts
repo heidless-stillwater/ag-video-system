@@ -107,10 +107,15 @@ export interface Project {
     subtitleFont?: string;
     thumbnailUrl?: string;
     seoMetadata?: {
+        selectedTitle?: string;
         titles: string[];
         description: string;
         tags: string[];
-        selectedTitle?: string;
+    };
+    voiceProfile?: 'standard' | 'soft' | 'deep' | 'whisper';
+    audioSettings?: {
+        autoDucking: boolean;
+        masterVolume: number;
     };
     savedRenders?: SavedRender[];
     translations?: { language: string; scriptId: string }[];
@@ -176,6 +181,7 @@ export interface Script {
     estimatedDuration: number; // in minutes
     sleepFriendlinessScore: number; // 0-100
     languageCode?: string; // e.g., 'en-US', 'es-ES', 'fr-FR'
+    voiceProfile?: 'standard' | 'soft' | 'deep' | 'whisper';
     isTranslation?: boolean;
     sourceScriptId?: string; // Original script ID if this is a translation
     createdAt: Date;
@@ -208,6 +214,7 @@ export interface VisualCue {
     transitionDuration?: number; // in milliseconds
     sfxUrl?: string;
     sfxVolume?: number;
+    sfxOffset?: number; // delay in milliseconds from scene start
     sfxLabel?: string;
 }
 

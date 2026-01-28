@@ -21,15 +21,22 @@ function getTTSClient(): TextToSpeechClient {
 }
 
 /**
- * Map of sleep-optimized voices for each supported language.
+ * Map of sleep-optimized voices for each supported language and profile.
  */
-const SLEEP_VOICES: Record<string, { languageCode: string; voiceName: string }> = {
-    'en-US': { languageCode: 'en-US', voiceName: 'en-US-Neural2-J' },
-    'es-ES': { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' },
-    'fr-FR': { languageCode: 'fr-FR', voiceName: 'fr-FR-Neural2-A' },
-    'de-DE': { languageCode: 'de-DE', voiceName: 'de-DE-Neural2-D' },
-    'ja-JP': { languageCode: 'ja-JP', voiceName: 'ja-JP-Neural2-C' },
-    'pt-BR': { languageCode: 'pt-BR', voiceName: 'pt-BR-Neural2-B' },
+const SLEEP_VOICES: Record<string, Record<string, { languageCode: string; voiceName: string }>> = {
+    'en-US': {
+        standard: { languageCode: 'en-US', voiceName: 'en-US-Neural2-J' },
+        soft: { languageCode: 'en-US', voiceName: 'en-US-Neural2-F' },
+        deep: { languageCode: 'en-US', voiceName: 'en-US-Neural2-D' },
+        whisper: { languageCode: 'en-US', voiceName: 'en-US-Neural2-H' },
+    },
+    'es-ES': {
+        standard: { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' },
+        soft: { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' }, // Fallback for now
+        deep: { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-B' },
+        whisper: { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' },
+    },
+    // ... add more as needed
 };
 
 /**
@@ -38,16 +45,35 @@ const SLEEP_VOICES: Record<string, { languageCode: string; voiceName: string }> 
  * @param text The text to synthesize.
  * @param envMode The environment mode.
  * @param languageCode Optional language code (e.g., 'es-ES'). Defaults to 'en-US'.
+ * @param voiceProfile Optional voice profile (e.g., 'soft'). Defaults to 'standard'.
  */
 export async function generateSpeech(
     text: string,
     envMode?: EnvironmentMode,
-    languageCode: string = 'en-US'
+    languageCode: string = 'en-US',
+    voiceProfile: string = 'standard'
 ): Promise<Buffer> {
     const client = getTTSClient();
     const config = getConfig(envMode);
 
-    const voiceConfig = SLEEP_VOICES[languageCode] || SLEEP_VOICES['en-US'];
+    const langVoices = SLEEP_VOICES[languageCode] || SLEEP_VOICES['en-US'];
+    const voiceConfig = langVoices[voiceProfile] || langVoices['standard'];
+
+    // Profile-specific SSML modifiers
+    let pitch = "-3st";
+    let volumeGain = "0dB";
+    let speed = config.tts.speakingRate;
+
+    if (voiceProfile === 'soft') {
+        pitch = "-1st";
+        speed = Math.max(0.6, speed - 0.05);
+    } else if (voiceProfile === 'deep') {
+        pitch = "-6st";
+    } else if (voiceProfile === 'whisper') {
+        pitch = "-1st";
+        volumeGain = "-3dB";
+        speed = Math.max(0.6, speed - 0.1);
+    }
 
     // Helper to escape XML special characters for SSML
     const escapeXml = (unsafe: string) => {
@@ -67,7 +93,7 @@ export async function generateSpeech(
     const paragraphs = text.split('\n\n').filter(p => p.trim().length > 0);
     const ssml = `
         <speak>
-            <prosody rate="${config.tts.speakingRate}" pitch="-3st">
+            <prosody rate="${speed}" pitch="${pitch}" volume="${volumeGain}">
                 ${paragraphs.map(p => escapeXml(p)).join('<break time="3s"/>')}
             </prosody>
         </speak>

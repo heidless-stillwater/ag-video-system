@@ -31,7 +31,12 @@ export const soundDesigner = {
             2. Choose ONE global ambiance ID for the entire documentary.
             3. Return a JSON object with:
                - "ambianceId": (string)
-               - "assignments": array of { "cueId": string, "sfxId": string }
+               - "assignments": array of { 
+                   "cueId": string, 
+                   "sfxId": string, 
+                   "delayMs": number (0-2000), 
+                   "volume": number (0.1-1.0) 
+                 }
 
             Focus on calming, atmospheric sounds. DO NOT hallucinate IDs outside the provided list.
         `;
@@ -39,14 +44,19 @@ export const soundDesigner = {
         try {
             const response = await generateContent(prompt, envMode);
             const jsonStr = response.replace(/```json|```/g, '').trim();
-            const result = JSON.parse(jsonStr) as { ambianceId: string; assignments: { cueId: string; sfxId: string }[] };
+            const result = JSON.parse(jsonStr) as {
+                ambianceId: string;
+                assignments: { cueId: string; sfxId: string; delayMs?: number; volume?: number }[]
+            };
 
             // Map IDs back to URLs
             return {
                 ambiance: AMBIANCE_LAYERS.find(a => a.id === result.ambianceId),
                 assignments: result.assignments.map(as => ({
                     cueId: as.cueId,
-                    sfx: SOUND_EFFECTS.find(s => s.id === as.sfxId)
+                    sfx: SOUND_EFFECTS.find(s => s.id === as.sfxId),
+                    sfxOffset: as.delayMs,
+                    sfxVolume: as.volume
                 })).filter(as => as.sfx) // Filter out any failed matches
             };
         } catch (error) {
