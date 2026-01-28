@@ -8,7 +8,8 @@ import { scriptService } from '@/lib/services/script';
 import { videoEngine, Scene } from '@/lib/services/video-engine';
 import { VideoPreview } from '@/components/project/VideoPreview';
 import { MP4Player } from '@/components/project/MP4Player';
-import { Project, ProjectStatus, Script, User, SavedRender } from '@/types';
+import { StyleSelector } from '@/components/project/StyleSelector';
+import { Project, ProjectStatus, Script, User, SavedRender, VisualStyle } from '@/types';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -17,11 +18,14 @@ import { useEnvironment } from '@/lib/hooks/useEnvironment';
 import { AMBIENT_TRACKS, audioService, AMBIANCE_LAYERS, SOUND_EFFECTS } from '@/lib/services/audio';
 import { TimelineEditor } from '@/components/project/TimelineEditor';
 import { userService } from '@/lib/services/firestore';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
+import { onSnapshot, doc } from 'firebase/firestore';
 import { PublishModal } from '@/components/project/PublishModal';
 import { fetchUsageLogs } from '@/app/actions/analytics';
-import { UsageLog } from '@/types';
+import { UsageLog, ViralClip } from '@/types';
+import { ViralShortsManager } from '@/components/shorts/ViralShortsManager';
+import { MOCK_USER } from '@/lib/auth/mockUser';
 
 export default function ProjectDetailPage() {
     const params = useParams();
@@ -43,7 +47,7 @@ export default function ProjectDetailPage() {
     const [error, setError] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<'overview' | 'timeline'>('overview');
     const [isSavingTimeline, setIsSavingTimeline] = useState(false);
-    const { user: currentUser } = useAuth();
+    const { user: currentUser, loading: authLoading } = useAuth();
     const [isConnectingYouTube, setIsConnectingYouTube] = useState(false);
     const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
     const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
@@ -56,6 +60,7 @@ export default function ProjectDetailPage() {
     const [activeViewType, setActiveViewType] = useState<'preview' | 'mp4'>('preview');
     const [costLogs, setCostLogs] = useState<UsageLog[]>([]);
     const [projectCost, setProjectCost] = useState(0);
+    const [isDirectorDrawerOpen, setIsDirectorDrawerOpen] = useState(false);
 
     // Global Launchpad (Dubbing) State
     const [isDubbing, setIsDubbing] = useState(false);
@@ -68,6 +73,9 @@ export default function ProjectDetailPage() {
         { code: 'ja-JP', name: 'Japanese 🇯🇵' },
         { code: 'pt-BR', name: 'Portuguese 🇧🇷' },
     ];
+
+    // Viral Shorts State
+    const [isGeneratingShortsCandidates, setIsGeneratingShortsCandidates] = useState(false);
 
     // Step Confirmation State
     const [stepConfirm, setStepConfirm] = useState<{
@@ -106,6 +114,13 @@ export default function ProjectDetailPage() {
 
     const [dubbingProgress, setDubbingProgress] = useState<Record<string, number>>({});
 
+    // YouTube Channel Status for Custom Thumbnails
+    const [youtubeChannelStatus, setYoutubeChannelStatus] = useState<{
+        connected: boolean;
+        canUploadThumbnails: boolean;
+        reason?: string;
+    } | null>(null);
+
     const interceptAction = (action: () => void, title: string, message: string) => {
         if (envConfig.ai.limitAI) {
             setStepConfirm({
@@ -119,25 +134,46 @@ export default function ProjectDetailPage() {
         }
     };
 
-    const loadProjectAndScript = async () => {
+    const loadProjectAndScript = async (preserveCurrentScript = false) => {
         try {
-            const projectData = await projectService.getProject(projectId);
+            let projectData: Project | null = null;
+            const isMockUser = currentUser?.id === 'mock-user-123';
+
+            if (isMockUser) {
+                const res = await fetch(`/api/projects/${projectId}`);
+                if (res.ok) {
+                    projectData = await res.json();
+                }
+            } else {
+                projectData = await projectService.getProject(projectId);
+            }
+
             if (projectData) {
                 setProject(projectData);
                 setAvailableTranslations(projectData.translations || []); // Set translations
 
                 // If the project has a script associated, load it
-                let scriptData = null;
-                if (projectData.currentScriptId) {
-                    scriptData = await scriptService.getScript(projectData.currentScriptId);
-                    setScript(scriptData);
+                // UNLESS we are preserving the current script (e.g., during render with translation)
+                if (projectData.currentScriptId && !preserveCurrentScript) {
+                    let scriptData: Script | null = null;
+                    if (isMockUser) {
+                        const res = await fetch(`/api/projects/${projectId}/script`);
+                        if (res.ok) scriptData = await res.json();
+                    } else {
+                        scriptData = await scriptService.getScript(projectData.currentScriptId);
+                    }
+
+                    if (scriptData) {
+                        setScript(scriptData);
+                        // SELF-HEALING: Detect and repair broken Pixabay URLs
+                        if (!isMockUser) { // Skip self-healing updates for mock user to avoid write permission errors
+                            await repairLegacyAudio(projectData, scriptData);
+                        }
+                    }
                 }
 
-                // SELF-HEALING: Detect and repair broken Pixabay URLs
-                await repairLegacyAudio(projectData, scriptData);
-
                 // Fetch Cost Logs
-                if (currentUser) {
+                if (currentUser && !isMockUser) {
                     const logs = await fetchUsageLogs(currentUser.id, 100, projectId);
                     setCostLogs(logs);
                     const total = logs.reduce((sum, log) => sum + (log.estimatedCost || 0), 0);
@@ -156,9 +192,95 @@ export default function ProjectDetailPage() {
         }
     };
 
+    // Initial Load & Real-time Listener
     useEffect(() => {
+        if (!projectId || authLoading) return; // Wait for auth to settle
+
+        // 1. Initial Load of Script (and Project once)
         loadProjectAndScript();
-    }, [projectId]);
+
+        let unsubscribe = () => { };
+        let pollingInterval: NodeJS.Timeout;
+
+        // Check if Mock User (to avoid Firestore Permission Errors)
+        const isMockUser = currentUser?.id === 'mock-user-123';
+
+        if (!currentUser && !authLoading) {
+            console.log('[ProjectDetail] No authenticated user detected. Skipping subscription.');
+            return;
+        }
+
+        if (isMockUser) {
+            console.log('[ProjectDetail] Mock User detected. Using API Polling instead of Firestore Listener.');
+
+            // Poll every 3 seconds via the Admin SDK API to bypass rules
+            pollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/projects/${projectId}`);
+                    if (res.ok) {
+                        const data = await res.json() as Project;
+                        // Determine if we need to update state (simple check)
+                        setProject(prev => {
+                            // JSON stringify comparison is primitive but effective for this scale
+                            if (JSON.stringify(prev) !== JSON.stringify(data)) {
+                                return data;
+                            }
+                            return prev;
+                        });
+
+                        // Also refresh script if needed (optional optimization: only if script ID changes)
+                        if (data.currentScriptId && (!script || script.id !== data.currentScriptId)) {
+                            loadProjectAndScript(true);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[ProjectDetail] Polling error:', e);
+                }
+            }, 3000);
+
+        } else if (currentUser) {
+            // 2. Real-time Project Updates (Standard Firestore Listener for Real Users)
+            console.log('[ProjectDetail] Subscribing to project updates:', projectId);
+            unsubscribe = onSnapshot(doc(db, 'projects', projectId),
+                (snapshot) => {
+                    if (snapshot.exists()) {
+                        const data = snapshot.data() as Project;
+                        // Merge ID just in case
+                        const updatedProject = { ...data, id: snapshot.id };
+
+                        // Update state securely
+                        setProject(prev => {
+                            return updatedProject;
+                        });
+                    }
+                },
+                (error) => {
+                    // During sign-out, this is expected and should be silenced
+                    if (error.code === 'permission-denied') {
+                        console.log('[ProjectDetail] Permission denied (likely sign-out). Stopping listener.');
+                        unsubscribe();
+                        return;
+                    }
+                    console.error('[ProjectDetail] Real-time listener error:', error);
+                }
+            );
+        }
+
+        return () => {
+            unsubscribe();
+            if (pollingInterval) clearInterval(pollingInterval);
+        };
+    }, [projectId, currentUser?.id, authLoading]);
+
+    // Fetch YouTube channel status for thumbnail verification
+    useEffect(() => {
+        if (currentUser?.settings.youtubeConnected && projectId) {
+            fetch(`/api/projects/${projectId}/youtube/status`)
+                .then(res => res.json())
+                .then(data => setYoutubeChannelStatus(data))
+                .catch(err => console.warn('Could not fetch YouTube status:', err));
+        }
+    }, [projectId, currentUser?.settings.youtubeConnected]);
 
     // Recalculate timeline whenever script changes
     useEffect(() => {
@@ -505,6 +627,17 @@ export default function ProjectDetailPage() {
         interceptAction(async () => {
             setIsGeneratingMedia(true);
             setError(null);
+
+            // Auto-snapshot for safety if we already have visuals
+            // We check project.status to infer if we likely have visuals, or check script.sections logic
+            // For now, simple logic: always snapshot if status is 'assembling' or 'ready' or has cues
+            try {
+                await handleSnapshot('Auto-Backup before Regen');
+            } catch (snapErr) {
+                console.warn('Auto-snapshot failed', snapErr);
+                // Don't block regeneration
+            }
+
             try {
                 const response = await fetch(`/api/projects/${project.id}/media`, {
                     method: 'POST',
@@ -523,7 +656,23 @@ export default function ProjectDetailPage() {
             } finally {
                 setIsGeneratingMedia(false);
             }
-        }, 'Generate AI Media?', 'This will use Imagen 3.0 to generate a unique image for every scene in the script. This is multiple real AI API calls.');
+        }, 'Regenerate Visual Assets?', 'This will replace ALL visual assets with new AI-generated images. \n\n🛡️ Safety: A backup snapshot of your current visuals will be saved automatically.');
+    };
+
+    const handleCancelMedia = async () => {
+        if (!project) return;
+        interceptAction(async () => {
+            try {
+                const res = await fetch(`/api/projects/${project.id}/media/cancel`, { method: 'POST' });
+                if (res.ok) {
+                    await loadProjectAndScript();
+                } else {
+                    throw new Error('Failed to cancel');
+                }
+            } catch (err: any) {
+                setError('Cancel failed: ' + err.message);
+            }
+        }, 'Cancel Generation?', 'This will stop the background generation process immediately. Some images may remain partially generated.');
     };
 
     const handleAssemble = async () => {
@@ -572,8 +721,8 @@ export default function ProjectDetailPage() {
                 const data = await response.json();
                 throw new Error(data.error || 'Rendering failed');
             }
-            // Refresh to catch the 'rendering' status immediately
-            await loadProjectAndScript();
+            // Refresh to catch the 'rendering' status immediately (preserve selected language)
+            await loadProjectAndScript(true);
         } catch (err: any) {
             setError('Render failed: ' + err.message);
         } finally {
@@ -597,6 +746,68 @@ export default function ProjectDetailPage() {
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleGenerateShortsCandidates = async () => {
+        if (!project || !script) return;
+        setIsGeneratingShortsCandidates(true);
+        try {
+            const response = await fetch(`/api/projects/${projectId}/shorts/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scriptId: script.id }),
+            });
+            const data = await response.json();
+            if (data.success) {
+                // Refresh project to get new shorts
+                await loadProjectAndScript(true);
+            } else {
+                throw new Error(data.error || 'Failed to generate shorts');
+            }
+        } catch (err: any) {
+            setError('Shorts Generation Error: ' + err.message);
+        } finally {
+            setIsGeneratingShortsCandidates(false);
+        }
+    };
+
+    const handleRenderShort = async (clipId: string) => {
+        if (!project || !script) return;
+        try {
+            const response = await fetch(`/api/projects/${projectId}/shorts/render`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scriptId: script.id, clipId }),
+            });
+            const data = await response.json();
+            if (data.success) {
+                // Start polling for this specific short's status
+                pollShortStatus(clipId);
+            } else {
+                throw new Error(data.error || 'Failed to start short render');
+            }
+        } catch (err: any) {
+            setError('Short Render Error: ' + err.message);
+        }
+    };
+
+    const pollShortStatus = async (clipId: string) => {
+        const interval = setInterval(async () => {
+            const response = await fetch(`/api/projects/${projectId}`);
+            const updatedProject = await response.json();
+            if (updatedProject) {
+                const short = updatedProject.shorts?.find((s: any) => s.id === clipId);
+                if (short && (short.status === 'ready' || short.status === 'failed')) {
+                    setProject(updatedProject);
+                    clearInterval(interval);
+                } else if (short) {
+                    // Update progress in local state
+                    setProject(updatedProject);
+                }
+            }
+        }, 3000);
+        // Timeout after 10 minutes
+        setTimeout(() => clearInterval(interval), 600000);
     };
 
     const handleSnapshotAndReset = async (label: string = 'Auto-Saved Version') => {
@@ -905,8 +1116,20 @@ export default function ProjectDetailPage() {
 
             const data = await response.json();
             if (data.success) {
-                // Keep modal open to show progress
-                await loadProjectAndScript();
+                // Poll for completion (background job)
+                const pollForCompletion = async () => {
+                    for (let i = 0; i < 60; i++) { // Max 3 minutes (60 * 3s)
+                        await new Promise(r => setTimeout(r, 3000));
+                        await loadProjectAndScript();
+
+                        // Check if project state updated to terminal state
+                        const latestProject = await projectService.getProject(project.id);
+                        if (latestProject?.status === 'published' || latestProject?.status === 'ready') {
+                            break;
+                        }
+                    }
+                };
+                await pollForCompletion();
             }
             else {
                 throw new Error(data.error || 'Publishing failed');
@@ -917,6 +1140,7 @@ export default function ProjectDetailPage() {
             setIsPublishing(false);
         }
     };
+
 
     const handleOptimizeViral = async () => {
         if (!project || !script) return;
@@ -1021,6 +1245,67 @@ export default function ProjectDetailPage() {
         }
     };
 
+    const handleUpdateStyle = async (style: string) => {
+        if (!project) return;
+        try {
+            const res = await fetch(`/api/projects/${project.id}/settings`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ visualStyle: style })
+            });
+
+            if (res.ok) {
+                await loadProjectAndScript();
+            } else {
+                throw new Error('Failed to update style');
+            }
+        } catch (err: any) {
+            setError('Style Update Error: ' + err.message);
+        }
+    };
+
+    const handleSnapshot = async (label?: string) => {
+        if (!project) return;
+        try {
+            const res = await fetch(`/api/projects/${project.id}/visuals/snapshots`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label })
+            });
+
+            if (res.ok) {
+                await loadProjectAndScript();
+                return true;
+            }
+        } catch (err) {
+            console.error('Snapshot error:', err);
+        }
+        return false;
+    };
+
+    const handleRevert = async (snapshotId: string) => {
+        if (!project) return;
+        try {
+            const res = await fetch(`/api/projects/${project.id}/visuals/revert`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ snapshotId })
+            });
+
+            if (res.ok) {
+                await loadProjectAndScript();
+                // If in timeline mode, refresh the local timeline state too
+                if (viewMode === 'timeline') {
+                    // This will refresh automatically due to loadProjectAndScript
+                }
+            } else {
+                throw new Error('Restore failed');
+            }
+        } catch (err: any) {
+            setError('Restore Error: ' + err.message);
+        }
+    };
+
     if (isLoading) {
         return (
             <ProtectedRoute>
@@ -1097,6 +1382,26 @@ export default function ProjectDetailPage() {
                                 Export Project
                             </button>
 
+                            {/* Director's Suite Toggle */}
+                            {project && (
+                                <div className="flex items-center gap-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full">
+                                    <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest whitespace-nowrap">
+                                        Style: {project.visualStyle || 'cinematic'}
+                                    </span>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => setIsDirectorDrawerOpen(!isDirectorDrawerOpen)}
+                                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shadow-lg ${isDirectorDrawerOpen
+                                    ? 'bg-indigo-600 text-white shadow-indigo-500/30'
+                                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                                    }`}
+                            >
+                                <span>🎛️</span>
+                                {isDirectorDrawerOpen ? 'Close Suite' : "Director's Suite"}
+                            </button>
+
                             {/* YouTube Connection Indicator in Header */}
                             {currentUser?.settings.youtubeConnected ? (
                                 <div className="flex items-center gap-2 px-3 py-1.5 bg-red-600/10 border border-red-500/20 rounded-lg">
@@ -1115,89 +1420,6 @@ export default function ProjectDetailPage() {
 
                         </div>
                     </div>
-                    {/* Global Launchpad (Dubbing) */}
-                    <div className="max-w-7xl mx-auto px-4 pb-4">
-                        <div className="bg-gradient-to-r from-indigo-900/50 to-purple-900/50 border border-indigo-500/30 rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg shadow-indigo-900/20 backdrop-blur-sm">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-indigo-500/20 rounded-lg border border-indigo-500/30">
-                                    <span className="text-2xl">🌍</span>
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-white flex items-center gap-2">
-                                        Global Launchpad
-                                        {availableTranslations.length > 0 && (
-                                            <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] rounded-full uppercase tracking-wider border border-green-500/20">
-                                                {availableTranslations.length} Active
-                                            </span>
-                                        )}
-                                    </h3>
-                                    <p className="text-xs text-indigo-200">Expand your documentary to new languages with AI Dubbing.</p>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-4">
-                                {/* Language Selector */}
-                                <select
-                                    value={selectedDubLanguage}
-                                    onChange={(e) => setSelectedDubLanguage(e.target.value)}
-                                    className="bg-slate-900 border border-indigo-500/30 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[160px]"
-                                >
-                                    {SUPPORTED_LANGUAGES.map(lang => (
-                                        <option key={lang.code} value={lang.code}>
-                                            {lang.name} {availableTranslations.some(t => t.language === lang.code) ? '✓' : ''}
-                                        </option>
-                                    ))}
-                                </select>
-
-                                <button
-                                    onClick={() => initiateDubbing(selectedDubLanguage)}
-                                    disabled={
-                                        isDubbing ||
-                                        (!!dubbingProgress[selectedDubLanguage]) ||
-                                        !project.currentScriptId
-                                    }
-                                    className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shadow-lg min-w-[140px] justify-center ${availableTranslations.some(t => t.language === selectedDubLanguage)
-                                        ? 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-200 border border-amber-500/30 shadow-amber-900/10'
-                                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20 hover:shadow-indigo-500/40'
-                                        } hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed`}
-                                >
-                                    {isDubbing ? (
-                                        <>
-                                            <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
-                                            <span>Starting...</span>
-                                        </>
-                                    ) : dubbingProgress[selectedDubLanguage] !== undefined ? (
-                                        <>
-                                            <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
-                                            <span>Dubbing {dubbingProgress[selectedDubLanguage]}%...</span>
-                                        </>
-                                    ) : availableTranslations.some(t => t.language === selectedDubLanguage) ? (
-                                        <>
-                                            <span className="text-lg">🔄</span>
-                                            <span>Redub</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span className="text-lg">🚀</span>
-                                            <span>Launch Dub</span>
-                                        </>
-                                    )}
-                                </button>
-
-                                {(isDubbing || dubbingProgress[selectedDubLanguage] !== undefined) && (
-                                    <button
-                                        onClick={handleCancelDubbing}
-                                        className="p-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg border border-red-500/30 transition-all shadow-lg hover:scale-110 active:scale-95"
-                                        title="Cancel Dubbing"
-                                    >
-                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </div>
 
                     {/* Cost Breakdown Bar (New) */}
                     <div className="max-w-7xl mx-auto px-4 pb-4">
@@ -1211,6 +1433,8 @@ export default function ProjectDetailPage() {
                             </div>
                         </div>
                     </div>
+
+
                     <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 md:pb-0">
                             {steps.map((step, i) => (
@@ -1611,6 +1835,14 @@ export default function ProjectDetailPage() {
                                                         {project.mediaMessage || 'Initializing cinematic generation...'}
                                                     </p>
                                                 </div>
+                                                {/* Cancel Button */}
+                                                <button
+                                                    onClick={handleCancelMedia}
+                                                    className="absolute top-4 right-4 p-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-full transition-colors border border-red-500/20"
+                                                    title="Cancel Generation"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                                                </button>
                                             </div>
                                         )}
 
@@ -1695,7 +1927,7 @@ export default function ProjectDetailPage() {
                                                                 <div className="w-5 h-5 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
                                                                 <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-sm animate-pulse"></div>
                                                             </div>
-                                                            <span className="text-sm font-black text-white uppercase tracking-widest">{project.renderProgress === 100 ? 'Finalizing...' : 'Baking High-Quality MP4...'}</span>
+                                                            <span className="text-sm font-black text-white uppercase tracking-widest truncate max-w-[300px] text-center inline-block">{project.renderProgress === 100 ? 'Finalizing...' : (project.renderMessage || 'Baking High-Quality MP4...')}</span>
                                                         </div>
                                                         <div className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-md">
                                                             <span className="text-xs font-mono font-bold text-blue-400">{project.renderProgress || 0}%</span>
@@ -1777,6 +2009,20 @@ export default function ProjectDetailPage() {
                                                     <span>{project.status === 'published' ? '🔄 Republish to YouTube' : '🚀 Review & Publish to YouTube'}</span>
                                                 )}
                                             </button>
+                                        )}
+
+                                        {/* YouTube Thumbnail Warning */}
+                                        {youtubeChannelStatus && youtubeChannelStatus.connected && !youtubeChannelStatus.canUploadThumbnails && (
+                                            <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl text-yellow-300 text-xs flex items-center gap-3">
+                                                <span>⚠️</span>
+                                                <div>
+                                                    <p className="font-bold">Custom Thumbnails Disabled</p>
+                                                    <p className="text-yellow-400/80">
+                                                        {youtubeChannelStatus.reason}
+                                                        <a href="https://www.youtube.com/verify" target="_blank" rel="noopener noreferrer" className="underline ml-1 hover:text-yellow-200">Verify Now →</a>
+                                                    </p>
+                                                </div>
+                                            </div>
                                         )}
 
                                         {project.status === 'ready' && (
@@ -2166,6 +2412,179 @@ export default function ProjectDetailPage() {
                         />
                     </>
                 )}
+
+                {/* Director's Suite Drawer */}
+                {isDirectorDrawerOpen && (
+                    <div
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] transition-opacity cursor-pointer"
+                        onClick={() => setIsDirectorDrawerOpen(false)}
+                    />
+                )}
+                <div className={`fixed inset-y-0 right-0 w-full sm:w-[450px] bg-slate-950 border-l border-white/10 shadow-2xl z-[101] transform transition-transform duration-500 ease-out overflow-y-auto no-scrollbar flex flex-col ${isDirectorDrawerOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+                    {/* Drawer Header */}
+                    <div className="p-6 border-b border-white/5 bg-slate-900/50 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-indigo-500/20 rounded-lg border border-indigo-500/30">
+                                <span className="text-2xl">🎛️</span>
+                            </div>
+                            <div>
+                                <h2 className="text-lg font-bold text-white">Director&apos;s Suite</h2>
+                                <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Documentary Control Center</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setIsDirectorDrawerOpen(false)}
+                            className="p-2 hover:bg-white/5 rounded-lg transition-colors text-slate-400"
+                        >
+                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div className="p-6 space-y-10">
+                        {/* 1. GLOBAL LAUNCHPAD (DUBBING) */}
+                        <section className="space-y-4">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xl">🌍</span>
+                                <h3 className="font-bold text-xs uppercase tracking-widest text-indigo-400">Global Launchpad</h3>
+                            </div>
+                            <div className="bg-gradient-to-br from-indigo-900/30 to-purple-900/30 border border-indigo-500/20 rounded-xl p-5 shadow-inner">
+                                <p className="text-xs text-indigo-200/60 mb-4 leading-relaxed">Expand your reach by dubbing into new languages with AI precision.</p>
+
+                                <div className="space-y-4">
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[10px] font-bold text-indigo-300 uppercase tracking-tighter">Target Language</label>
+                                        <select
+                                            value={selectedDubLanguage}
+                                            onChange={(e) => setSelectedDubLanguage(e.target.value)}
+                                            className="w-full bg-slate-900 border border-indigo-500/30 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            {SUPPORTED_LANGUAGES.map(lang => (
+                                                <option key={lang.code} value={lang.code}>
+                                                    {lang.name} {availableTranslations.some(t => t.language === lang.code) ? '✓' : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <button
+                                        onClick={() => initiateDubbing(selectedDubLanguage)}
+                                        disabled={isDubbing || (!!dubbingProgress[selectedDubLanguage]) || !project.currentScriptId}
+                                        className={`w-full py-3 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg justify-center ${availableTranslations.some(t => t.language === selectedDubLanguage)
+                                            ? 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-200 border border-amber-500/30 shadow-amber-900/10'
+                                            : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
+                                            }`}
+                                    >
+                                        {isDubbing ? (
+                                            <><span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" /><span className="ml-2">Starting...</span></>
+                                        ) : dubbingProgress[selectedDubLanguage] !== undefined ? (
+                                            <><span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" /><span className="ml-2">Dubbing {dubbingProgress[selectedDubLanguage]}%...</span></>
+                                        ) : (
+                                            <>
+                                                <span className="text-lg">{availableTranslations.some(t => t.language === selectedDubLanguage) ? '🔄' : '🚀'}</span>
+                                                <span className="ml-2">{availableTranslations.some(t => t.language === selectedDubLanguage) ? 'Redub' : 'Launch Dub'}</span>
+                                            </>
+                                        )}
+                                    </button>
+
+                                    {(isDubbing || dubbingProgress[selectedDubLanguage] !== undefined) && (
+                                        <button
+                                            onClick={handleCancelDubbing}
+                                            className="w-full py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg border border-red-500/20 text-xs font-bold uppercase tracking-widest"
+                                        >
+                                            Stop active session
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* 1.5. VIRAL SHORTS ENGINE */}
+                        <section className="space-y-4">
+                            <ViralShortsManager
+                                projectId={projectId}
+                                scriptId={script?.id || ''}
+                                shorts={project?.shorts || []}
+                                onGenerateCandidates={handleGenerateShortsCandidates}
+                                onRenderShort={handleRenderShort}
+                                isGenerating={isGeneratingShortsCandidates}
+                            />
+                        </section>
+
+                        <section className="space-y-4">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xl">🎨</span>
+                                <h3 className="font-bold text-xs uppercase tracking-widest text-purple-400">Aesthetic Styles</h3>
+                            </div>
+                            <StyleSelector
+                                selectedStyle={(project?.visualStyle as VisualStyle) || 'cinematic'}
+                                onStyleSelect={(style) => handleUpdateStyle(style)}
+                            />
+                        </section>
+
+                        {/* 3. VISUAL VERSION HISTORY */}
+                        <section className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xl">⏳</span>
+                                    <h3 className="font-bold text-xs uppercase tracking-widest text-amber-400">Visual Timeline</h3>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const label = prompt('Enter a label for this snapshot (e.g., "Original Cinematic")');
+                                        if (label !== null) handleSnapshot(label);
+                                    }}
+                                    className="p-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-amber-500"
+                                    title="Create Snapshot"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div className="space-y-2">
+                                {(!project?.visualSnapshots || project.visualSnapshots.length === 0) ? (
+                                    <div className="py-8 text-center border border-dashed border-white/5 rounded-xl text-slate-500 text-[10px] uppercase tracking-widest">
+                                        No versions saved.
+                                    </div>
+                                ) : (
+                                    [...project.visualSnapshots].reverse().slice(0, 5).map((snap) => (
+                                        <div
+                                            key={snap.id}
+                                            className="p-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between group"
+                                        >
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="text-[9px] font-bold text-white truncate max-w-[120px]">{snap.label}</span>
+                                                    <span className="px-1.5 py-0.5 bg-white/10 rounded text-[7px] text-slate-400 font-bold uppercase">{snap.style}</span>
+                                                </div>
+                                                <p className="text-[8px] text-slate-600">{new Date(snap.timestamp).toLocaleDateString()} {new Date(snap.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    if (confirm(`Restore to "${snap.label}"?`)) handleRevert(snap.id);
+                                                }}
+                                                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[8px] font-bold uppercase tracking-widest transition-all opacity-0 group-hover:opacity-100"
+                                            >
+                                                Restore
+                                            </button>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </section>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="mt-auto p-6 bg-slate-900/80 border-t border-white/5">
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono uppercase tracking-widest">
+                            <span>Project ID: {project.id.substring(0, 8)}</span>
+                            <span>v2.1.0-DIRECTOR</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </ProtectedRoute>
     );

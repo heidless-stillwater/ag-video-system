@@ -4,6 +4,30 @@ import { firestoreAdmin } from '@/lib/services/firestore-admin';
 import { cookies } from 'next/headers';
 import { EnvironmentMode } from '@/lib/config/environment';
 
+export async function GET(
+    req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const { id: projectId } = await params;
+
+    try {
+        const project = await firestoreAdmin.getProject(projectId);
+        if (!project || !project.currentScriptId) {
+            return NextResponse.json({ error: 'Script not found' }, { status: 404 });
+        }
+
+        const script = await firestoreAdmin.getScript(project.currentScriptId);
+        if (!script) {
+            return NextResponse.json({ error: 'Script document missing' }, { status: 404 });
+        }
+
+        return NextResponse.json(script);
+    } catch (error: any) {
+        console.error('[Script API] Error fetching script:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
+
 export async function POST(
     req: NextRequest,
     { params }: { params: Promise<{ id: string }> }

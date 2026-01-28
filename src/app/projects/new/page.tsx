@@ -7,6 +7,8 @@ import { topicService, projectService } from '@/lib/services/firestore';
 import { Topic } from '@/types';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { StyleSelector } from '@/components/project/StyleSelector';
+import { VisualStyle, ProjectStatus } from '@/types';
 
 function NewProjectContent() {
     const { user } = useAuth();
@@ -20,6 +22,7 @@ function NewProjectContent() {
     const [isLoading, setIsLoading] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [visualStyle, setVisualStyle] = useState<VisualStyle>('cinematic');
 
     useEffect(() => {
         async function loadTopic() {
@@ -30,7 +33,18 @@ function NewProjectContent() {
             }
 
             try {
-                const topicData = await topicService.getTopic(topicId);
+                const isMockUser = user?.id === 'mock-user-123';
+                let topicData: Topic | null = null;
+
+                if (isMockUser) {
+                    const res = await fetch(`/api/topics/${topicId}`);
+                    if (res.ok) {
+                        topicData = await res.json();
+                    }
+                } else {
+                    topicData = await topicService.getTopic(topicId);
+                }
+
                 if (topicData) {
                     setTopic(topicData);
                     setTitle(topicData.title);
@@ -56,12 +70,15 @@ function NewProjectContent() {
         setError(null);
 
         try {
-            const projectId = await projectService.createProject({
+            const isMockUser = user.id === 'mock-user-123';
+            let projectId = '';
+
+            const projectData = {
                 userId: user.id,
                 title,
                 description,
                 topicId: topic.id,
-                status: 'draft',
+                status: 'draft' as ProjectStatus,
                 research: {
                     sources: [],
                     facts: [],
@@ -70,7 +87,24 @@ function NewProjectContent() {
                 },
                 estimatedDuration: 120, // Default 2 hours
                 estimatedCost: 0,
-            });
+                visualStyle: visualStyle,
+            };
+
+            if (isMockUser) {
+                const res = await fetch('/api/projects', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(projectData),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    projectId = data.projectId;
+                } else {
+                    throw new Error('Failed to create project via API');
+                }
+            } else {
+                projectId = await projectService.createProject(projectData);
+            }
 
             // Redirect to project editor/dashboard
             router.push(`/projects/${projectId}`);
@@ -149,6 +183,14 @@ function NewProjectContent() {
                                 <span className="text-xs text-slate-500 block mb-1 uppercase tracking-wider font-bold">SEO Score</span>
                                 <span className="text-blue-400 font-bold">{topic?.seoScore}/100</span>
                             </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-slate-400 mb-4">Visual Aesthetic</label>
+                            <StyleSelector
+                                selectedStyle={visualStyle}
+                                onStyleSelect={setVisualStyle}
+                            />
                         </div>
                     </div>
 

@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { getConfig, EnvironmentMode } from '@/lib/config/environment';
 import { generateVisualCues, generateImage } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
-import { getScript, updateScript, updateProject } from '@/lib/services/firestore-admin';
+import { getScript, updateScript, updateProject, getProject } from '@/lib/services/firestore-admin';
 import { resourceGovernor } from '@/lib/services/resource-governor';
 import { VisualCue } from '@/types';
 
@@ -31,14 +31,18 @@ export async function POST(
             }, { status: 503 });
         }
 
-        // 1. Get Script Details
+        // 1. Get Project and Script Details
+        const project = await getProject(projectId);
         const script = await getScript(scriptId);
-        if (!script) {
-            return NextResponse.json({ error: 'Script not found' }, { status: 404 });
+
+        if (!project || !script) {
+            return NextResponse.json({ error: 'Project or Script not found' }, { status: 404 });
         }
 
+        const visualStyle = project.visualStyle || 'cinematic';
+
         // 2. Initial Setup and Status Update
-        console.log(`[Media API] Triggering background media generation for script: ${scriptId}`);
+        console.log(`[Media API] Triggering background media generation for script: ${scriptId} with style: ${visualStyle}`);
 
         // Set status and reset progress immediately so UI can react
         await updateProject(projectId, {
@@ -55,14 +59,34 @@ export async function POST(
         const processMedia = async () => {
             try {
                 // Count total cues for progress tracking
+                // Step 1: CLEAR CANVAS (The user's requested "delete images" step)
+                // This ensures the UI updates to show "empty" state before generating new ones.
+                const clearedSections: any[] = JSON.parse(JSON.stringify(script.sections));
                 let totalCues = 0;
-                for (const section of script.sections) {
-                    totalCues += (section.visualCues?.length || 4);
+
+                for (const section of clearedSections) {
+                    if (section.visualCues) {
+                        totalCues += section.visualCues.length;
+                        // Wipe cues entirely to force "Regenerate Cues" logic to run with NEW style
+                        section.visualCues = [];
+                    } else {
+                        totalCues += 4; // Assumption for missing cues
+                    }
                 }
+
+                // Push the "Cleared" state to DB
+                await updateScript(scriptId, { sections: clearedSections });
+                await updateProject(projectId, {
+                    mediaMessage: 'Deep cleaning canvas...'
+                } as any);
+
+                // Short pause to ensure UI catches the "Cleared" state
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
                 let completedCues = 0;
 
-                // Process each section sequentially
-                const updatedSections: any[] = [...script.sections];
+                // Process each section sequentially (using the cleared sections as base)
+                const updatedSections: any[] = clearedSections;
                 for (let sectionIndex = 0; sectionIndex < updatedSections.length; sectionIndex++) {
                     const section = updatedSections[sectionIndex];
                     let sectionCues = section.visualCues || [];
@@ -72,8 +96,8 @@ export async function POST(
                     const shouldRegenerateCues = (sectionCues.length === 0) || (config.ai.model === 'mock');
 
                     if (shouldRegenerateCues) {
-                        console.log(`[Media API] ${config.ai.model === 'mock' ? 'MOCK MODE: Forcing' : 'Generating'} cues for section: ${section.title}`);
-                        const rawCues = await generateVisualCues(section.title, section.content, envMode);
+                        console.log(`[Media API] ${config.ai.model === 'mock' ? 'MOCK MODE: Forcing' : 'Generating'} cues for section: ${section.title} using style: ${visualStyle}`);
+                        const rawCues = await generateVisualCues(section.title, section.content, envMode, visualStyle);
                         sectionCues = rawCues.map((c: any) => ({
                             ...c,
                             id: Math.random().toString(36).substr(2, 9),
@@ -99,16 +123,16 @@ export async function POST(
                                 continue;
                             }
 
-                            console.log(`[Media API] Generating image ${i + 1}/${sectionCues.length} for cue: ${cue.description.substring(0, 30)}... (envMode: ${envMode}, model: ${config.ai.model})`);
+                            console.log(`[Media API] Generating image ${i + 1}/${sectionCues.length} for cue: ${cue.description.substring(0, 30)}... (Style: ${visualStyle})`);
 
                             try {
-                                const imageResult = await generateImage(cue.description, envMode);
+                                const imageResult = await generateImage(cue.description, envMode, visualStyle);
                                 let finalUrl: string;
                                 if (typeof imageResult === 'string' && imageResult.startsWith('http')) {
                                     finalUrl = imageResult;
                                 } else if (Buffer.isBuffer(imageResult)) {
                                     const uploadedUrl = await storageService.uploadImage(script.projectId, cue.id, imageResult);
-                                    finalUrl = uploadedUrl;
+                                    finalUrl = `${uploadedUrl}?t=${Date.now()}`;
                                 } else {
                                     throw new Error('Unexpected image result type');
                                 }
@@ -116,13 +140,21 @@ export async function POST(
                                 updatedCues.push({ ...cue, url: finalUrl, status: 'completed' as const });
                                 completedCues++;
 
+                                // CHECK FOR CANCELLATION (Every image - Real AI Mode)
+                                const currentProject = await getProject(projectId);
+                                if (!currentProject || currentProject.status !== 'generating_media') {
+                                    console.log('[Media API] Process cancelled by user request (Real Mode).');
+                                    return; // EXIT THE PROCESS
+                                }
+
                                 // Incremental Update
                                 const currentProgress = Math.round((completedCues / totalCues) * 100);
+                                const truncatedDesc = cue.description.length > 40 ? cue.description.substring(0, 40) + '...' : cue.description;
                                 updatedSections[sectionIndex] = { ...section, visualCues: updatedCues };
                                 await updateScript(scriptId, { sections: updatedSections });
                                 await updateProject(projectId, {
                                     mediaProgress: currentProgress,
-                                    mediaMessage: `Painting scene ${completedCues} of ${totalCues}...`
+                                    mediaMessage: `Painting scene ${completedCues} of ${totalCues}: "${truncatedDesc}"`
                                 } as any);
 
                                 // Add delay between requests (12 seconds + jitter = ~5 requests per minute max)
@@ -146,9 +178,15 @@ export async function POST(
                         updatedCues = await Promise.all(sectionCues.map(async (cue: any) => {
                             const isMockUrl = cue.url && cue.url.includes('images.unsplash.com');
                             if (cue.url && !isMockUrl) return cue;
-                            console.log(`[Media API] Generating image for cue: ${cue.description.substring(0, 30)}... (envMode: ${envMode}, model: ${config.ai.model})`);
+                            console.log(`[Media API] Generating image for cue: ${cue.description.substring(0, 30)}... (Style: ${visualStyle}, model: ${config.ai.model})`);
+
+                            // Mock progress update for parallel mode (optional, might be too fast to see)
+                            const truncatedDesc = cue.description.length > 40 ? cue.description.substring(0, 40) + '...' : cue.description;
+                            await updateProject(projectId, {
+                                mediaMessage: `Quick Painting: "${truncatedDesc}"`
+                            } as any);
                             try {
-                                const imageResult = await generateImage(cue.description, envMode);
+                                const imageResult = await generateImage(cue.description, envMode, visualStyle);
                                 let finalUrl = '';
                                 if (typeof imageResult === 'string' && imageResult.startsWith('http')) {
                                     finalUrl = imageResult;
@@ -158,7 +196,7 @@ export async function POST(
                                         cue.id,
                                         imageResult
                                     );
-                                    finalUrl = uploadedUrl;
+                                    finalUrl = `${uploadedUrl}?t=${Date.now()}`;
                                 } else {
                                     throw new Error('Unexpected image result type');
                                 }
@@ -169,6 +207,14 @@ export async function POST(
                                 return { ...cue, url: '', status: 'failed' as const, error: error.message };
                             }
                         }));
+
+                        // CHECK FOR CANCELLATION (After section parallel batch)
+                        const currentProject = await getProject(projectId);
+                        if (!currentProject || currentProject.status !== 'generating_media') {
+                            console.log('[Media API] Process cancelled by user request (Mock Mode).');
+                            return; // EXIT THE PROCESS
+                        }
+
                         completedCues += updatedCues.length;
                     }
 

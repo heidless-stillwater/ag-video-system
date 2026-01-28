@@ -46,7 +46,16 @@ export default function Dashboard() {
   const confirmDelete = async () => {
     setDeleteModal(prev => ({ ...prev, loading: true }));
     try {
-      await projectService.deleteProject(deleteModal.projectId);
+      const isMockUser = user?.id === 'mock-user-123';
+      if (isMockUser) {
+        const res = await fetch(`/api/projects/${deleteModal.projectId}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) throw new Error('Failed to delete project via API');
+      } else {
+        await projectService.deleteProject(deleteModal.projectId);
+      }
+
       setProjects(prev => prev.filter(p => p.id !== deleteModal.projectId));
       setDeleteModal({ isOpen: false, projectId: '', title: '', loading: false });
     } catch (error) {
@@ -71,7 +80,24 @@ export default function Dashboard() {
       }
 
       try {
-        const userProjects = await projectService.getUserProjects(user.id);
+        const isMockUser = user.id === 'mock-user-123';
+        let userProjects: Project[] = [];
+
+        if (isMockUser) {
+          const res = await fetch(`/api/projects?userId=${user.id}`);
+          if (res.ok) {
+            const data = await res.json();
+            // Convert string dates back to Date objects
+            userProjects = data.map((p: any) => ({
+              ...p,
+              createdAt: p.createdAt ? new Date(p.createdAt) : undefined,
+              updatedAt: p.updatedAt ? new Date(p.updatedAt) : new Date(),
+            }));
+          }
+        } else {
+          userProjects = await projectService.getUserProjects(user.id);
+        }
+
         setProjects(userProjects);
       } catch (error) {
         console.error('Error loading projects:', error);

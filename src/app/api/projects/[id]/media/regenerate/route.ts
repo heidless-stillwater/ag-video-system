@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { getConfig, EnvironmentMode } from '@/lib/config/environment';
 import { generateImage } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
-import { getScript, updateScript } from '@/lib/services/firestore-admin';
+import { getScript, updateScript, getProject } from '@/lib/services/firestore-admin';
 
 /**
  * API Route for regenerating a single visual cue image.
@@ -31,10 +31,14 @@ export async function POST(
         const cookieStore = await cookies();
         const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
 
-        console.log(`[Media Regeneration] Regenerating cue ${cueId} for section ${sectionId} (env: ${envMode})`);
+        // 2b. Get Project for Visual Style
+        const project = await getProject(projectId);
+        const visualStyle = project?.visualStyle || 'cinematic';
+
+        console.log(`[Media Regeneration] Regenerating cue ${cueId} for section ${sectionId} (env: ${envMode}, style: ${visualStyle})`);
 
         // 3. Generate Image
-        const imageResult = await generateImage(prompt, envMode);
+        const imageResult = await generateImage(prompt, envMode, visualStyle);
         let finalUrl: string;
 
         if (typeof imageResult === 'string' && imageResult.startsWith('http')) {
@@ -42,6 +46,8 @@ export async function POST(
         } else if (Buffer.isBuffer(imageResult)) {
             // 4. Upload to Storage
             finalUrl = await storageService.uploadImage(projectId, cueId, imageResult);
+            // Append timestamp to force cache bust on client side
+            finalUrl += `?t=${Date.now()}`;
         } else {
             throw new Error('Unexpected image result type from AI service');
         }

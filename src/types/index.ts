@@ -117,11 +117,21 @@ export interface Project {
     activeDubbingSessionId?: string;
     cancelledDubbingSessionId?: string;
     visualStyle?: VisualStyle;
+    visualSnapshots?: VisualSnapshot[];
+    shorts?: ViralClip[];
     createdAt: Date;
     updatedAt: Date;
 }
 
 export type VisualStyle = 'cinematic' | 'anime' | 'cyberpunk' | 'oil-painting' | 'national-geographic' | 'studio-ghibli' | 'vaporwave' | 'watercolor' | 'sketch';
+
+export interface VisualSnapshot {
+    id: string;
+    timestamp: Date;
+    label: string;
+    style: VisualStyle;
+    cues: Record<string, string>; // Map of cueId to imageUrl
+}
 
 export interface SavedRender {
     id: string;
@@ -333,3 +343,24 @@ export const DEFAULT_SLEEP_GUIDELINES: SleepContentGuidelines = {
         volumeLevel: 0.2,
     },
 };
+
+// ===== Social Growth Engine (Shorts) Types =====
+export interface ViralCandidate {
+    title: string;
+    description: string;
+    startSceneIndex: number;
+    endSceneIndex: number;
+    estimatedDuration: number;
+    viralScore: number; // 0-100
+    reasoning: string;
+    hookType: 'fact' | 'question' | 'mystery' | 'cinematic';
+}
+
+export interface ViralClip extends ViralCandidate {
+    id: string;
+    projectId: string;
+    status: 'pending' | 'rendering' | 'ready' | 'failed';
+    downloadUrl?: string;
+    renderProgress?: number;
+    createdAt: Date;
+}

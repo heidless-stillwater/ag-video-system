@@ -3,9 +3,10 @@
 import React from 'react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { AuthButton } from './AuthButton';
+import { isMockAuthEnabled } from '@/lib/auth/mockUser';
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-    const { user, loading } = useAuth();
+    const { user, loading, signInWithMock } = useAuth();
 
     if (loading) {
         return (
@@ -28,7 +29,19 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
                 <p className="text-gray-400 mb-8 text-center max-w-sm">
                     Please sign in to access the VideoSystem generator and manage your projects.
                 </p>
-                <AuthButton />
+                <div className="flex flex-col w-full gap-3">
+                    <AuthButton />
+
+                    {isMockAuthEnabled() && (
+                        <button
+                            onClick={signInWithMock}
+                            className="w-full py-3 px-6 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-all border border-white/5 flex items-center justify-center gap-2"
+                        >
+                            <span className="text-xl">🧪</span>
+                            Sign in with Mock Account
+                        </button>
+                    )}
+                </div>
             </div>
         );
     }

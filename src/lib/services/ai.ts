@@ -5,7 +5,8 @@ import { analyticsServerService } from './analytics-server';
 import path from 'path';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import { ScriptSection } from '@/types';
+import { Script, ScriptSection, VisualStyle, ViralCandidate } from '@/types';
+import { videoEngine } from './video-engine';
 
 let vertexAI: VertexAI | null = null;
 
@@ -238,7 +239,8 @@ export async function extractFacts(content: string, envMode?: EnvironmentMode): 
 export async function generateVisualCues(
     sectionTitle: string,
     sectionContent: string,
-    envMode?: EnvironmentMode
+    envMode?: EnvironmentMode,
+    visualStyle: VisualStyle = 'cinematic'
 ): Promise<{
     timestamp: number;
     type: 'image' | 'video';
@@ -253,6 +255,8 @@ export async function generateVisualCues(
 
     const prompt = `
         You are an art director for a cinematic, calming documentary channel.
+        The overall visual style for this documentary is: ${visualStyle.toUpperCase()}.
+        
         For the following script section, ${cueCountPrompt}
         Each cue represents a high-quality, atmospheric piece of imagery that should be on screen.
 
@@ -260,7 +264,7 @@ export async function generateVisualCues(
         CONTENT: ${sectionContent}
 
         GUIDELINES:
-        1. Aesthetic: Cinematic, high-dynamic-range, often slow-moving or static.
+        1. Aesthetic: ${visualStyle}, high-dynamic-range, often slow-moving or static. Ensure the description leans into the ${visualStyle} look.
         2. Transitions: Every cue should specify a "transitionType" ('fade', 'blur', 'zoom', or 'slide') and a "transitionDuration" in milliseconds (default: 1200).
         3. Variety: Ensure each cue description is **unique, distinct, and highly varied** compared to the others in the section. Avoid repetition.
         4. Format: JSON array of objects with "timestamp" (in SECONDS, e.g., 8.5 for 8.5 seconds), "type", "description", "transitionType", and "transitionDuration".
@@ -293,7 +297,11 @@ export async function generateVisualCues(
     }
 }
 
-export async function generateImage(prompt: string, envMode?: EnvironmentMode): Promise<Buffer | string> {
+export async function generateImage(
+    prompt: string,
+    envMode?: EnvironmentMode,
+    visualStyle: VisualStyle = 'cinematic'
+): Promise<Buffer | string> {
     const overrideMode = envMode || getEnvironmentMode();
     const config = getConfig(overrideMode);
     const startTime = Date.now();
@@ -301,16 +309,27 @@ export async function generateImage(prompt: string, envMode?: EnvironmentMode): 
     console.log(`[generateImage] envMode: ${overrideMode}, config.ai.model: ${config.ai.model}`);
 
     if (config.ai.model === 'mock') {
+        // Pseudo-random selection based on visual style to give some variety
+        // Note: Real style changes require STAGING or PROD environment
         const placeholders = [
-            'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b',
-            'https://images.unsplash.com/photo-1506744038136-46273834b3fb',
-            'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a',
-            'https://images.unsplash.com/photo-1501785888041-af3ef285b470',
-            'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1',
+            'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b', // Mountains
+            'https://images.unsplash.com/photo-1506744038136-46273834b3fb', // Valley
+            'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a', // Stars
+            'https://images.unsplash.com/photo-1501785888041-af3ef285b470', // Coast
+            'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1', // Sunrise
+            'https://images.unsplash.com/photo-1518066000714-58c45f1a2c0a', // Oil Painting feel
+            'https://images.unsplash.com/photo-1563089145-599997674d42', // Neon/Cyber
+            'https://images.unsplash.com/photo-1578301978693-85fa9c0320b9', // Abstract/Watercolor
         ];
 
-        const index = Math.floor(Math.random() * placeholders.length);
-        const randomSig = Math.floor(Math.random() * 1000000);
+        let index = Math.floor(Math.random() * placeholders.length);
+
+        // Simple mapping to try and match style if possible
+        if (visualStyle === 'cyberpunk') index = 6;
+        if (visualStyle === 'oil-painting') index = 5;
+        if (visualStyle === 'watercolor') index = 7;
+
+        const randomSig = Math.floor(Math.random() * 1000000) + Date.now();
         return `${placeholders[index]}?auto=format&fit=crop&q=80&w=1000&sig=${randomSig}`;
     }
 
@@ -322,9 +341,22 @@ export async function generateImage(prompt: string, envMode?: EnvironmentMode): 
             throw new Error('Authentication or Project ID missing for REST API');
         }
 
-        const endpoint = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-3.0-generate-001:predict`;
+        const STYLE_METADATA: Record<VisualStyle, string> = {
+            'cinematic': 'cinematic, high dynamic range, photorealistic, highly detailed, atmospheric sleep documentary style, 8k resolution',
+            'anime': 'high-quality anime style, vibrant colors, expressive lighting, detailed backgrounds, Makoto Shinkai aesthetic',
+            'studio-ghibli': 'hand-painted studio ghibli aesthetic, charming, soft lighting, lush landscapes, Hayao Miyazaki style',
+            'cyberpunk': 'cyberpunk noir, neon lighting, rainy atmosphere, futuristic urban landscapes, high contrast, cinematic',
+            'oil-painting': 'classic oil painting on canvas, visible brushstrokes, rich textures, masterpieces quality, artistic lighting',
+            'national-geographic': 'national geographic photography, professional wildlife/nature photo, tack sharp, natural lighting, documentary style',
+            'vaporwave': 'vaporwave aesthetic, 80s retro, pastel pink and blue gradients, surreal landscapes, lo-fi nostalgic vibe',
+            'watercolor': 'expressive watercolor painting, soft edges, paper texture, artistic wash, delicate details',
+            'sketch': 'detailed charcoal and pencil sketch, artistic cross-hatching, hand-drawn aesthetic, high contrast black and white'
+        };
 
-        const enhancedPrompt = `cinematic, high dynamic range, photorealistic, highly detailed, atmospheric sleep documentray style, 8k resolution: ${prompt}`;
+        const stylePrompt = STYLE_METADATA[visualStyle] || STYLE_METADATA['cinematic'];
+        const enhancedPrompt = `${stylePrompt}: ${prompt}`;
+
+        const endpoint = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/imagen-3.0-generate-001:predict`;
 
         const payload = {
             instances: [{ prompt: enhancedPrompt }],
@@ -520,5 +552,147 @@ export async function translateScript(
                 audioStatus: 'pending' as const
             }))
         };
+    }
+}
+
+/**
+ * Analyzes a script to find 3 segments with high viral potential for Shorts (30-60s).
+ */
+export async function findViralClipCandidates(script: Script, overrideMode?: EnvironmentMode): Promise<ViralCandidate[]> {
+    const mode = overrideMode || getEnvironmentMode();
+
+    // In DEV mode, return mock candidates unless explicitly in real AI mode
+    if (mode === 'DEV') {
+        const sectionCount = script.sections.length;
+        // Ensure we don't go out of bounds for short scripts
+        const safeEnd = Math.max(0, sectionCount - 1);
+        const safeStart = Math.max(0, safeEnd - 2);
+
+        // Helper to get real scene indices for mock data
+        const timeline = videoEngine.calculateTimeline(script);
+        const getSceneIndexForSection = (secIdx: number, isEnd: boolean) => {
+            const safeSecIdx = Math.min(Math.max(0, secIdx), sectionCount - 1);
+            const secId = script.sections[safeSecIdx].id;
+            if (isEnd) {
+                // Find last scene of this section
+                for (let i = timeline.length - 1; i >= 0; i--) {
+                    if (timeline[i].sectionId === secId) return i;
+                }
+                return timeline.length - 1;
+            } else {
+                // Find first scene of this section
+                return timeline.findIndex(s => s.sectionId === secId);
+            }
+        };
+
+        return [
+            {
+                title: "The Mystery of Deep Sleep",
+                description: "A fascinating look at what happens to the brain during Stage 3 sleep.",
+                startSceneIndex: getSceneIndexForSection(Math.floor(sectionCount * 0.2), false),
+                endSceneIndex: getSceneIndexForSection(Math.floor(sectionCount * 0.3), true),
+                estimatedDuration: 45,
+                viralScore: 92,
+                reasoning: "High-interest scientific fact with a strong hook about brain cleanup.",
+                hookType: "fact"
+            },
+            {
+                title: "Midnight Brain Storm",
+                description: "Explaining REM sleep and the sudden fire of neurons.",
+                startSceneIndex: getSceneIndexForSection(Math.floor(sectionCount * 0.5), false),
+                endSceneIndex: getSceneIndexForSection(Math.floor(sectionCount * 0.6), true),
+                estimatedDuration: 35,
+                viralScore: 88,
+                reasoning: "Fast-paced visual potential and intriguing question about why we dream.",
+                hookType: "question"
+            },
+            {
+                title: "The 3 AM Revelation",
+                description: "Why we wake up at 3 AM and how to get back to sleep.",
+                startSceneIndex: getSceneIndexForSection(Math.floor(sectionCount * 0.7), false),
+                endSceneIndex: getSceneIndexForSection(safeEnd, true),
+                estimatedDuration: 55,
+                viralScore: 95,
+                reasoning: "Extremely relatable problem with an immediate actionable solution.",
+                hookType: "mystery"
+            }
+        ];
+    }
+
+    const prompt = `
+        As a YouTube Shorts Growth Expert, analyze the following documentary script and identify exactly 3 segments that would make excellent 30-60 second vertical "Shorts".
+        
+        A good short must have:
+        1. A strong hook in the first 3 seconds.
+        2. A cohesive "mini-story" or curiosity loop.
+        3. High engagement potential (surprising facts, relatable problems, or intense imagery).
+        
+        Script Sections:
+        ${script.sections.map((s, i) => `[Scene ${i}]: ${s.content}`).join('\n')}
+        
+        Return ONLY a JSON array of 3 objects with this structure:
+        {
+            "title": "Hooky Title",
+            "description": "Short social media description",
+            "startSceneIndex": number,
+            "endSceneIndex": number,
+            "estimatedDuration": number,
+            "viralScore": 0-100,
+            "reasoning": "Why this segment will go viral",
+            "hookType": "fact" | "question" | "mystery" | "cinematic"
+        }
+    `;
+
+    try {
+        const response = await generateContent(prompt, mode);
+        // Extract JSON
+        const jsonMatch = response.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error('Failed to parse viral candidates JSON');
+        const rawCandidates = JSON.parse(jsonMatch[0]);
+
+        // CALCULATE VISUAL TIMELINE TO MAP SECTIONS -> SCENES
+        const fullTimeline = videoEngine.calculateTimeline(script);
+
+        // Helper to translate Section Index -> Scene Index
+        const mapSectionToScene = (sectionIndex: number, isEnd: boolean): number => {
+            if (sectionIndex < 0) return 0;
+            if (sectionIndex >= script.sections.length) return fullTimeline.length - 1;
+
+            const targetSectionId = script.sections[sectionIndex].id;
+
+            if (isEnd) {
+                // Find the LAST scene belonging to this section
+                for (let i = fullTimeline.length - 1; i >= 0; i--) {
+                    if (fullTimeline[i].sectionId === targetSectionId) return i;
+                }
+                return fullTimeline.length - 1; // Fallback
+            } else {
+                // Find the FIRST scene belonging to this section
+                const idx = fullTimeline.findIndex(s => s.sectionId === targetSectionId);
+                return idx === -1 ? 0 : idx;
+            }
+        };
+
+        // Remap the candidates
+        return rawCandidates.map((c: any) => ({
+            ...c,
+            startSceneIndex: mapSectionToScene(c.startSceneIndex, false),
+            endSceneIndex: mapSectionToScene(c.endSceneIndex, true)
+        }));
+    } catch (error) {
+        console.error('[findViralClipCandidates] Error:', error);
+        // Fallback to segments of the script if AI fails
+        return [
+            {
+                title: "Fascinating Fact",
+                description: "A snippet from our documentary.",
+                startSceneIndex: 0,
+                endSceneIndex: Math.min(2, script.sections.length - 1),
+                estimatedDuration: 30,
+                viralScore: 70,
+                reasoning: "Automatic fallback selection.",
+                hookType: "fact"
+            }
+        ];
     }
 }

@@ -50,16 +50,35 @@ export default function TopicsPage() {
         setError(null);
 
         try {
-            const topicId = await topicService.createTopic({
+            const isMockUser = user.id === 'mock-user-123';
+            let topicId = '';
+
+            const topicData = {
                 userId: user.id,
                 title: suggestion.title,
                 description: suggestion.description,
                 broadCategory: query,
                 keywords: suggestion.keywords,
                 seoScore: suggestion.seoScore,
-                competitionLevel: 'medium',
+                competitionLevel: 'medium' as const,
                 searchVolume: 1000,
-            });
+            };
+
+            if (isMockUser) {
+                const res = await fetch('/api/topics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(topicData),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    topicId = data.topicId;
+                } else {
+                    throw new Error('Failed to create topic via API');
+                }
+            } else {
+                topicId = await topicService.createTopic(topicData);
+            }
 
             router.push(`/projects/new?topicId=${topicId}`);
         } catch (err: any) {

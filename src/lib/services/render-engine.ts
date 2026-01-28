@@ -84,23 +84,29 @@ export const renderEngine = {
         globalSfxVolume: number = 0.4,
         subtitlesEnabled: boolean = false,
         subtitleStyle: string = 'minimal',
+        aspectRatio: '16:9' | '9:16' = '16:9',
+        customFileName?: string,
         onProgress?: (progress: number, message: string) => Promise<void>
     ): Promise<string> {
-        console.log(`[FFmpegRenderEngine] Starting high-fidelity 4K render for: ${projectId} (Subtitles: ${subtitlesEnabled}, Narration: ${narrationVolume}, SFX: ${globalSfxVolume})`);
+        const isVertical = aspectRatio === '9:16';
+        console.log(`[FFmpegRenderEngine] Starting ${isVertical ? 'Vertical (9:16)' : '4K Horizontal (16:9)'} render for: ${projectId}`);
 
         const startTime = Date.now();
         const tempDir = path.join(process.cwd(), 'tmp', `render-${projectId}`);
         const outputDir = path.join(process.cwd(), 'public', 'renders');
-        const outputFile = path.join(outputDir, `${projectId}.mp4`);
+        const fileName = customFileName || `${projectId}.mp4`;
+        const outputFile = path.join(outputDir, fileName);
 
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
         if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
         try {
+            console.log(`[FFmpegRenderEngine] Debug: Entered try block. Scenes: ${scenes.length}`);
             // 1. Download all assets locally
             if (onProgress) await onProgress(0, `Downloading ${scenes.length} assets...`);
             console.log(`[FFmpegRenderEngine] Downloading assets for ${scenes.length} scenes...`);
             const assetPaths = await this.downloadAssets(projectId, scenes, backgroundMusicUrl, ambianceUrl, tempDir);
+            console.log(`[FFmpegRenderEngine] Debug: Assets downloaded. Images: ${assetPaths.images.length}`);
 
             // 2. Pre-scale images to 4K to match preview fidelity
             console.log(`[FFmpegRenderEngine] Pre-scaling ${assetPaths.images.length} images to 4K Ultra HD...`);
@@ -111,7 +117,7 @@ export const renderEngine = {
                 }
                 const originalPath = assetPaths.images[i];
                 const processedPath = path.join(tempDir, `proc-img-${i}.jpg`);
-                await this.preProcessImage(originalPath, processedPath);
+                await this.preProcessImage(originalPath, processedPath, aspectRatio);
                 assetPaths.images[i] = processedPath;
                 // Delete original to save space
                 fs.unlinkSync(originalPath);
@@ -119,7 +125,7 @@ export const renderEngine = {
 
             // 3. Perform single-pass render with transitions
             console.log(`[FFmpegRenderEngine] Running single-pass complex render...`);
-            await this.generateCineVideo(scenes, assetPaths, outputFile, tempDir, onProgress, backgroundMusicVolume, ambianceVolume, narrationVolume, globalSfxVolume, subtitlesEnabled, subtitleStyle);
+            await this.generateCineVideo(scenes, assetPaths, outputFile, tempDir, onProgress, backgroundMusicVolume, ambianceVolume, narrationVolume, globalSfxVolume, subtitlesEnabled, subtitleStyle, aspectRatio);
 
             console.log(`[FFmpegRenderEngine] SUCCESS: ${outputFile}`);
 
@@ -196,19 +202,34 @@ export const renderEngine = {
         return { images: imagePaths, audio: audioPaths, backgroundMusic: backgroundMusicPath, ambiance: ambiancePath, sfx: sfxPaths };
     },
 
-    generateAssFile(scenes: Scene[], tempDir: string, styleType: string = 'minimal'): string {
+    generateAssFile(scenes: Scene[], tempDir: string, styleType: string = 'minimal', aspectRatio: '16:9' | '9:16' = '16:9'): string {
         const assPath = path.join(tempDir, 'subtitles.ass');
+        const isVertical = aspectRatio === '9:16';
 
+        // Base values for 16:9 (4K)
+        let playResX = 3840;
+        let playResY = 2160;
         let fontSize = 128;
+        let alignment = 2; // Bottom Center
+        let marginV = 200;
         let bold = 0;
         let primaryColour = '&H33FFFFFF'; // 80% opacity white
 
+        // Adjust for Vertical (9:16)
+        if (isVertical) {
+            playResX = 1080;
+            playResY = 1920;
+            fontSize = 72; // Larger relative to width
+            alignment = 5; // Middle Center for high impact Shorts
+            marginV = 0;
+        }
+
         if (styleType === 'bold') {
-            fontSize = 144;
+            fontSize = isVertical ? 86 : 144;
             bold = -1; // ASS bold is -1
             primaryColour = '&H00FFFFFF'; // 100% white
         } else if (styleType === 'classic') {
-            fontSize = 116;
+            fontSize = isVertical ? 64 : 116;
             primaryColour = '&H00FFFFFF';
         }
 
@@ -219,12 +240,12 @@ export const renderEngine = {
             'WrapStyle: 0',
             'ScaledBorderAndShadow: yes',
             'YCbCr Matrix: TV.601',
-            'PlayResX: 3840',
-            'PlayResY: 2160',
+            `PlayResX: ${playResX}`,
+            `PlayResY: ${playResY}`,
             '',
             '[V4+ Styles]',
             'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-            `Style: Default,Arial,${fontSize},${primaryColour},&H000000FF,&H00000000,&H80000000,${bold},0,0,0,100,100,2,0,1,0,2,2,300,300,200,1`,
+            `Style: Default,Arial,${fontSize},${primaryColour},&H000000FF,&H00000000,&H80000000,${bold},0,0,0,100,100,2,0,1,0,2,${alignment},300,300,${marginV},1`,
             '',
             '[Events]',
             'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
@@ -287,12 +308,15 @@ export const renderEngine = {
         console.log(`[Resources] [${label}] RAM: RSS=${(memory.rss / 1024 / 1024).toFixed(2)}MB, Heap=${(memory.heapUsed / 1024 / 1024).toFixed(2)}MB | CPU Load (1m): ${load[0].toFixed(2)}`);
     },
 
-    async preProcessImage(src: string, dest: string) {
+    async preProcessImage(src: string, dest: string, aspectRatio: '16:9' | '9:16' = '16:9') {
+        const isVertical = aspectRatio === '9:16';
         return new Promise<void>((resolve, reject) => {
             ffmpeg(src)
                 .renice(10)
                 .outputOptions([
-                    '-vf', 'scale=3840:2160:force_original_aspect_ratio=increase,crop=3840:2160,setsar=1'
+                    '-vf', isVertical
+                        ? 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1'
+                        : 'scale=3840:2160:force_original_aspect_ratio=increase,crop=3840:2160,setsar=1'
                 ])
                 .on('end', () => resolve())
                 .on('error', (err) => reject(err))
@@ -374,7 +398,8 @@ export const renderEngine = {
         narrationVolume: number = 1.0,
         globalSfxVolume: number = 0.4,
         subtitlesEnabled: boolean = false,
-        subtitleStyle: string = 'minimal'
+        subtitleStyle: string = 'minimal',
+        renderAspectRatio: '16:9' | '9:16' = '16:9'
     ) {
         this.logResources('START_GEN_VIDEO');
         const segmentFiles: string[] = [];
@@ -431,7 +456,7 @@ export const renderEngine = {
             // 4. Final Mux with Audio
             if (onProgress) await onProgress(95, 'Finalizing audio mix...');
             console.log(`[FFmpegRenderEngine] Final audio muxing...`);
-            await this.muxFinalAudio(silentVideoPath, scenes, assetPaths, outputPath, backgroundMusicVolume, ambianceVolume, narrationVolume, globalSfxVolume, subtitlesEnabled, subtitleStyle, tempDir);
+            await this.muxFinalAudio(silentVideoPath, scenes, assetPaths, outputPath, backgroundMusicVolume, ambianceVolume, narrationVolume, globalSfxVolume, subtitlesEnabled, subtitleStyle, tempDir, renderAspectRatio);
 
             if (onProgress) await onProgress(100, 'Render complete!');
 
@@ -453,7 +478,8 @@ export const renderEngine = {
         globalSfxVolume: number = 0.4,
         subtitlesEnabled: boolean = false,
         subtitleStyle: string = 'minimal',
-        tempDir: string = ''
+        tempDir: string = '',
+        renderAspectRatio: '16:9' | '9:16' = '16:9'
     ) {
         return new Promise<void>((resolve, reject) => {
             const command = ffmpeg(videoPath);
@@ -499,7 +525,7 @@ export const renderEngine = {
 
             // Video Filter: Subtitles (ASS focus for 1:1 parity)
             if (subtitlesEnabled) {
-                const assPath = this.generateAssFile(scenes, tempDir, subtitleStyle);
+                const assPath = this.generateAssFile(scenes, tempDir, subtitleStyle, renderAspectRatio);
                 // We must use forward slashes and escape colons for absolute paths
                 const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
 

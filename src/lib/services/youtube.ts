@@ -211,6 +211,45 @@ export const youtubeService = {
         };
     },
 
+    /**
+     * Check if the channel is verified for custom thumbnail uploads.
+     * YouTube requires phone verification for custom thumbnails.
+     * We infer this from `longUploadsStatus` being 'allowed'.
+     */
+    async getChannelStatus(accessToken: string): Promise<{ canUploadThumbnails: boolean; reason?: string }> {
+        try {
+            const client = this.getOAuth2Client();
+            client.setCredentials({ access_token: accessToken });
+            const youtube = google.youtube({ version: 'v3', auth: client });
+
+            const response = await youtube.channels.list({
+                part: ['status', 'snippet'],
+                mine: true
+            });
+
+            const channel = response.data.items?.[0];
+            if (!channel) {
+                return { canUploadThumbnails: false, reason: 'No channel found for this account.' };
+            }
+
+            // `longUploadsStatus` being 'allowed' indicates phone verification.
+            // Channels with this status can also upload custom thumbnails.
+            const longUploadsStatus = (channel.status as any)?.longUploadsStatus;
+
+            if (longUploadsStatus === 'allowed') {
+                return { canUploadThumbnails: true };
+            } else {
+                return {
+                    canUploadThumbnails: false,
+                    reason: 'Channel is not phone-verified. Visit youtube.com/verify to enable custom thumbnails.'
+                };
+            }
+        } catch (error: any) {
+            console.error('[YouTube Service] getChannelStatus error:', error.message);
+            return { canUploadThumbnails: false, reason: 'Could not verify channel status.' };
+        }
+    },
+
     async uploadVideo(
         tokens: { accessToken: string; refreshToken: string },
         videoStream: Readable,

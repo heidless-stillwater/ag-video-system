@@ -51,6 +51,7 @@ export async function POST(
         } as any);
 
         // Trigger the render without awaiting it so we can return quickly
+        console.log(`[Render API] Calling renderEngine.renderDocumentary...`);
         renderEngine.renderDocumentary(
             projectId,
             scenes,
@@ -62,7 +63,10 @@ export async function POST(
             project.globalSfxVolume || 0.4,
             project.subtitlesEnabled || false,
             project.subtitleStyle || 'minimal',
+            '16:9', // aspectRatio
+            undefined, // customFileName
             async (progress, message) => {
+                console.log(`[Render API] Progress Update: ${progress}% - ${message}`);
                 await updateProject(projectId, {
                     renderProgress: progress,
                     renderMessage: message
