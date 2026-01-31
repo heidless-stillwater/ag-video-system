@@ -17,13 +17,16 @@ export async function PATCH(
 
         // Security/Validation: Only allow specific fields to be updated via this endpoint
         const allowedFields = [
+            'title',
+            'description',
             'visualStyle',
             'subtitleStyle',
             'subtitleFont',
             'subtitlesEnabled',
             'ambianceVolume',
             'narrationVolume',
-            'globalSfxVolume'
+            'globalSfxVolume',
+            'backgroundMusicVolume'
         ];
 
         const filteredUpdates: any = {};

@@ -27,6 +27,7 @@ import { UsageLog, ViralClip } from '@/types';
 import { ViralShortsManager } from '@/components/shorts/ViralShortsManager';
 import { MOCK_USER } from '@/lib/auth/mockUser';
 import { MasteringBooth } from '@/components/project/MasteringBooth';
+import { ProjectSettings } from '@/components/project/ProjectSettings';
 
 export default function ProjectDetailPage() {
     const params = useParams();
@@ -36,6 +37,7 @@ export default function ProjectDetailPage() {
     const [project, setProject] = useState<Project | null>(null);
     const [script, setScript] = useState<Script | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isUpdatingProject, setIsUpdatingProject] = useState(false);
     const [isResearching, setIsResearching] = useState(false);
     const [isScripting, setIsScripting] = useState(false);
     const [isSoundDesigning, setIsSoundDesigning] = useState(false);
@@ -46,7 +48,7 @@ export default function ProjectDetailPage() {
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
     const [timeline, setTimeline] = useState<Scene[]>([]);
     const [error, setError] = useState<string | null>(null);
-    const [viewMode, setViewMode] = useState<'overview' | 'timeline'>('overview');
+    const [viewMode, setViewMode] = useState<'overview' | 'timeline' | 'settings'>('overview');
     const [isSavingTimeline, setIsSavingTimeline] = useState(false);
     const { user: currentUser, loading: authLoading } = useAuth();
     const [isConnectingYouTube, setIsConnectingYouTube] = useState(false);
@@ -77,6 +79,56 @@ export default function ProjectDetailPage() {
     }, [project?.publishProgress, project?.status, publishDisplayProgress]);
     const [isInlinePreviewActive, setIsInlinePreviewActive] = useState(false);
     const [activeViewType, setActiveViewType] = useState<'preview' | 'mp4'>('preview');
+
+    // --- Utility Handlers (Moved up to avoid hoisting issues) ---
+
+    const handleUpdateProject = async (updates: Partial<Project>) => {
+        if (!project) return;
+        setIsUpdatingProject(true);
+        try {
+            const res = await fetch(`/api/projects/${project.id}/settings`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates)
+            });
+
+            if (res.ok) {
+                // Optimistic UI update or full reload
+                await loadProjectAndScript();
+            } else {
+                throw new Error('Failed to update project settings');
+            }
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsUpdatingProject(false);
+        }
+    };
+
+    const handleSnapshot = async (label?: string) => {
+        if (!project) return;
+        try {
+            const res = await fetch(`/api/projects/${project.id}/visuals/snapshots`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label })
+            });
+
+            if (res.ok) {
+                await loadProjectAndScript();
+                return true;
+            }
+        } catch (err) {
+            console.error('Snapshot error:', err);
+        }
+        return false;
+    };
+
+    const handleUpdateStyle = async (style: string) => {
+        await handleUpdateProject({ visualStyle: style as any });
+    };
+
+    // --- Original Logic ---
     const [costLogs, setCostLogs] = useState<UsageLog[]>([]);
     const [projectCost, setProjectCost] = useState(0);
     const [isDirectorDrawerOpen, setIsDirectorDrawerOpen] = useState(false);
@@ -1408,43 +1460,7 @@ export default function ProjectDetailPage() {
         }
     };
 
-    const handleUpdateStyle = async (style: string) => {
-        if (!project) return;
-        try {
-            const res = await fetch(`/api/projects/${project.id}/settings`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ visualStyle: style })
-            });
 
-            if (res.ok) {
-                await loadProjectAndScript();
-            } else {
-                throw new Error('Failed to update style');
-            }
-        } catch (err: any) {
-            setError('Style Update Error: ' + err.message);
-        }
-    };
-
-    const handleSnapshot = async (label?: string) => {
-        if (!project) return;
-        try {
-            const res = await fetch(`/api/projects/${project.id}/visuals/snapshots`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ label })
-            });
-
-            if (res.ok) {
-                await loadProjectAndScript();
-                return true;
-            }
-        } catch (err) {
-            console.error('Snapshot error:', err);
-        }
-        return false;
-    };
 
     const handleRevert = async (snapshotId: string) => {
         if (!project) return;
@@ -1538,7 +1554,10 @@ export default function ProjectDetailPage() {
                             >
                                 Delete Project
                             </button>
-                            <button className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">
+                            <button
+                                onClick={() => setViewMode('settings')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'settings' ? 'bg-blue-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                            >
                                 Settings
                             </button>
                             <button className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-bold transition-colors">
@@ -1633,6 +1652,12 @@ export default function ProjectDetailPage() {
                                 className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === 'timeline' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-white'}`}
                             >
                                 Timeline Editor
+                            </button>
+                            <button
+                                onClick={() => setViewMode('settings')}
+                                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === 'settings' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-white'}`}
+                            >
+                                Settings
                             </button>
                         </div>
                     </div>
@@ -2380,6 +2405,12 @@ export default function ProjectDetailPage() {
                                 </div>
                             </div>
                         </div>
+                    ) : viewMode === 'settings' ? (
+                        <ProjectSettings
+                            project={project}
+                            onUpdateProject={handleUpdateProject}
+                            isUpdating={isUpdatingProject}
+                        />
                     ) : (
                         script && (
                             <TimelineEditor

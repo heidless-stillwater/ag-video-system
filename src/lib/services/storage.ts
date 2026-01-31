@@ -22,7 +22,11 @@ export const storageService = {
 
             // Make the file publicly accessible (relevant for dev/MVP)
             // Or generate a signed URL if you want it private
-            await file.makePublic();
+            try {
+                await file.makePublic();
+            } catch (aclError: any) {
+                console.warn('[Storage Service] Could not make audio public (might be bucket settings):', aclError.message);
+            }
 
             return `https://storage.googleapis.com/${bucket.name}/${fileName}`;
         } catch (error) {
@@ -47,7 +51,11 @@ export const storageService = {
                 },
             });
 
-            await file.makePublic();
+            try {
+                await file.makePublic();
+            } catch (aclError: any) {
+                console.warn('[Storage Service] Could not make image public (might be bucket settings):', aclError.message);
+            }
             return `https://storage.googleapis.com/${bucket.name}/${fileName}`;
         } catch (error) {
             console.error('[Storage Service] Image upload error:', error);
@@ -73,7 +81,11 @@ export const storageService = {
                 },
             });
 
-            await file.makePublic();
+            try {
+                await file.makePublic();
+            } catch (aclError: any) {
+                console.warn('[Storage Service] Could not make video public (might be bucket settings):', aclError.message);
+            }
             return `https://storage.googleapis.com/${bucket.name}/${fileName}`;
         } catch (error) {
             console.error('[Storage Service] Video upload error:', error);
@@ -123,7 +135,12 @@ export const storageService = {
 
         const archiveFile = bucket.file(archiveFileName);
         await sourceFile.copy(archiveFile);
-        await archiveFile.makePublic();
+
+        try {
+            await archiveFile.makePublic();
+        } catch (aclError: any) {
+            console.warn('[Storage Service] Could not make archive public (might be bucket settings):', aclError.message);
+        }
 
         return {
             archiveUrl: `https://storage.googleapis.com/${bucket.name}/${archiveFileName}`,
