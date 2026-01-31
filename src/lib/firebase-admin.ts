@@ -1,71 +1,120 @@
 import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// Initialize Firebase Admin (singleton pattern)
-if (!admin.apps.length) {
-    try {
-        const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-        const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+/**
+ * Initialize Firebase Admin SDK for VideoSystem.
+ * 
+ * CRITICAL CHANGE: This module now FAILS FAST in production if credentials are missing.
+ * It only falls back to mocks during the 'phase-production-build' to allow static generation.
+ */
 
+const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'heidless-firebase-2';
+const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build' || process.env.NEXT_PUBLIC_IS_BUILD === 'true';
+
+console.log(`[Firebase Admin] Module loading. Project: ${projectId}. Phase: ${process.env.NEXT_PHASE || 'RUNTIME'}`);
+
+// SANITATION: Unset invalid GOOGLE_APPLICATION_CREDENTIALS to prevent crashes in other SDKs
+const saPathEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+if (saPathEnv) {
+    const absolutePath = path.isAbsolute(saPathEnv) ? saPathEnv : path.join(process.cwd(), saPathEnv);
+    if (!fs.existsSync(absolutePath)) {
+        console.warn(`[Firebase Admin] ⚠️ Unsetting invalid GOOGLE_APPLICATION_CREDENTIALS: ${absolutePath}`);
+        delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    }
+}
+
+let app: admin.app.App;
+const existingApp = admin.apps.find(a => a?.name === '[DEFAULT]') || admin.apps[0];
+
+if (existingApp) {
+    app = existingApp;
+    console.log(`[Firebase Admin] ✅ Reusing existing app: ${app.name}`);
+} else {
+    try {
         let credential;
 
+        // 1. Precise Environment Variable (Cloud Run / Production Secrets)
         if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-            // Priority 1: Direct JSON from env var (best for cloud)
+            console.log('[Firebase Admin] 🔑 Using FIREBASE_SERVICE_ACCOUNT_JSON');
             const saContent = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
             credential = admin.credential.cert(saContent);
-            console.log(`[Firebase Admin] Initialized with FIREBASE_SERVICE_ACCOUNT_JSON`);
-        } else if (saPath) {
-            // Priority 2: Path from env var
-            const absolutePath = path.isAbsolute(saPath) ? saPath : path.join(process.cwd(), saPath);
-            if (fs.existsSync(absolutePath)) {
-                try {
-                    const saContent = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
-                    credential = admin.credential.cert(saContent);
-                    console.log(`[Firebase Admin] Initialized with credentials from: ${absolutePath}`);
-                } catch (readErr) {
-                    console.error(`[Firebase Admin] Failed to parse service account file at ${absolutePath}:`, readErr);
-                    credential = admin.credential.applicationDefault();
-                }
-            } else {
-                console.warn(`[Firebase Admin] Service account file not found at ${absolutePath}, falling back to applicationDefault`);
-                credential = admin.credential.applicationDefault();
+        }
+        // 2. Local File (Dev)
+        else {
+            const possibleSaPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+            if (possibleSaPath && fs.existsSync(path.resolve(possibleSaPath))) {
+                console.log(`[Firebase Admin] 🔑 Using file: ${possibleSaPath}`);
+                credential = admin.credential.cert(possibleSaPath);
             }
-        } else {
-            // Default Google credentials
+        }
+
+        // 3. ADC Fallback (Cloud Run)
+        if (!credential) {
+            console.log('[Firebase Admin] ☁️ Attempting Application Default Credentials (ADC)');
             credential = admin.credential.applicationDefault();
         }
 
-        admin.initializeApp({
+        app = admin.initializeApp({
             credential,
             projectId,
-            storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+            storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || `${projectId}.firebasestorage.app`,
         });
-        console.log(`[Firebase Admin] Initialized successfully for project: ${projectId}`);
-    } catch (error) {
-        console.error('[Firebase Admin] Initialization error:', error);
-        // Non-fatal if we are in build mode
-        if (process.env.NODE_ENV === 'production' && process.env.NEXT_PHASE === 'phase-production-build') {
-            console.warn('[Firebase Admin] Initialization failed during build phase. Continuing...');
+
+        console.log(`[Firebase Admin] ✅ Successfully initialized for ${projectId}`);
+
+    } catch (error: any) {
+        console.error('[Firebase Admin] ❌ Initialization FAILED:', error);
+
+        if (isBuildPhase) {
+            console.warn('[Firebase Admin] ⚠️ Build phase detected. Proceeding without valid app.');
         } else {
-            // Re-throw if it's runtime and we have no apps
-            if (!admin.apps.length) throw error;
+            // FATAL ERROR IN PRODUCTION
+            throw new Error(`Firebase Admin Init Failed: ${error.message}`);
         }
     }
 }
 
-import { getStorage } from 'firebase-admin/storage';
+// Get Services
+let db: any;
+let storage: any;
 
-// Named database instance
-// getFirestore('autovideo-db-0') works in firebase-admin v11.3+
-const dbAdmin = getFirestore('autovideo-db-0');
-// CRITICAL: settings() must be called immediately after instantiation
 try {
-    dbAdmin.settings({ ignoreUndefinedProperties: true });
-} catch (e) {
-    console.warn('[Firebase Admin] Firestore settings already applied or could not be set.');
+    // @ts-ignore - 'app' might be undefined if init failed during build
+    if (app) {
+        db = getFirestore(app, 'autovideo-db-0');
+        storage = getStorage(app);
+        console.log('[Firebase Admin] ✅ Services ready: Firestore (autovideo-db-0), Storage');
+    } else {
+        throw new Error('No App Instance');
+    }
+} catch (e: any) {
+    if (isBuildPhase) {
+        console.warn('[Firebase Admin] ⚠️ Using MOCK Firestore/Storage for BUILD only.');
+        db = {
+            collection: () => ({
+                doc: () => ({
+                    get: () => Promise.resolve({ exists: false, data: () => null }),
+                    set: () => Promise.resolve(),
+                    update: () => Promise.resolve(),
+                    delete: () => Promise.resolve(),
+                }),
+                where: () => db.collection('mock'),
+                orderBy: () => db.collection('mock'),
+                limit: () => db.collection('mock'),
+                get: () => Promise.resolve({ docs: [] }),
+                add: () => Promise.resolve({ id: 'mock-id' }),
+            }),
+            settings: () => { }
+        };
+        storage = { bucket: () => ({ exists: () => Promise.resolve([false]), file: () => ({ exists: () => Promise.resolve([false]) }) }) };
+    } else {
+        // FATAL ERROR IN RUNTIME
+        console.error('[Firebase Admin] ❌ Service connection Failed:', e.message);
+        throw e;
+    }
 }
-const storage = getStorage();
 
-export { admin, dbAdmin as db, storage };
+export { admin, db, storage };

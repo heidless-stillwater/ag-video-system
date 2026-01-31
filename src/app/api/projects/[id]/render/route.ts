@@ -56,13 +56,13 @@ export async function POST(
             projectId,
             scenes,
             project.backgroundMusicUrl,
-            project.backgroundMusicVolume || 0.2,
+            project.backgroundMusicVolume ?? 0.2,
             project.ambianceUrl,
-            project.ambianceVolume || 0.1,
-            project.narrationVolume || 1.0,
-            project.globalSfxVolume || 0.4,
-            project.subtitlesEnabled || false,
-            project.subtitleStyle || 'minimal',
+            project.ambianceVolume ?? 0.1,
+            project.narrationVolume ?? 1.0,
+            project.globalSfxVolume ?? 0.4,
+            project.subtitlesEnabled ?? false,
+            project.subtitleStyle ?? 'minimal',
             '16:9', // aspectRatio
             undefined, // customFileName
             async (progress, message) => {
@@ -72,15 +72,29 @@ export async function POST(
                     renderMessage: message
                 } as any);
             }
-        ).then(async () => {
-            const downloadUrl = `/renders/${projectId}.mp4`;
-            await updateProject(projectId, {
-                downloadUrl,
-                status: 'ready',
-                renderProgress: 100,
-                renderMessage: 'Render complete!'
-            } as any);
-            console.log(`[Render API] Background render SUCCESS for: ${projectId}`);
+        ).then(async (finalUrl) => {
+            const proxyUrl = `/api/projects/${projectId}/video`;
+            console.log(`[Render API] Render completed. Updating Firestore with downloadUrl: ${proxyUrl}`);
+
+            try {
+                await updateProject(projectId, {
+                    downloadUrl: proxyUrl,
+                    status: 'ready',
+                    renderProgress: 100,
+                    renderMessage: 'Render complete!'
+                } as any);
+                console.log(`[Render API] ✅ Firestore update SUCCESS. downloadUrl set to: ${proxyUrl}`);
+            } catch (updateError: any) {
+                console.error('[Render API] ❌ Firestore update FAILED:', updateError);
+                console.error('[Render API] Error details:', {
+                    message: updateError.message,
+                    stack: updateError.stack,
+                    projectId,
+                    proxyUrl
+                });
+            }
+
+            console.log(`[Render API] Background render SUCCESS for: ${projectId}. Cloud URL: ${finalUrl}`);
         }).catch(async (error) => {
             console.error('[Render API] Background render failed:', error);
             await updateProject(projectId, {

@@ -23,7 +23,7 @@ export async function fetchUsageLogs(userId: string, limitCount: number = 100, p
 
         const snapshot = await queryRef.get();
 
-        return snapshot.docs.map(doc => {
+        return snapshot.docs.map((doc: any) => {
             const data = doc.data();
             return {
                 id: doc.id,

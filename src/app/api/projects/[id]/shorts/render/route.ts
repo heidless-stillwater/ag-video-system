@@ -90,11 +90,11 @@ export async function POST(
             projectId,
             normalizedScenes,
             project.backgroundMusicUrl,
-            project.backgroundMusicVolume || 0.2,
+            project.backgroundMusicVolume ?? 0.2,
             project.ambianceUrl,
-            project.ambianceVolume || 0.1,
-            project.narrationVolume || 1.0,
-            project.globalSfxVolume || 0.4,
+            project.ambianceVolume ?? 0.1,
+            project.narrationVolume ?? 1.0,
+            project.globalSfxVolume ?? 0.4,
             project.subtitlesEnabled || true, // Always enable for shorts
             'bold', // Force bold high-impact subtitles for shorts
             '9:16', // Vertical aspect ratio
@@ -111,19 +111,20 @@ export async function POST(
                     }
                 }
             }
-        ).then(async () => {
-            const downloadUrl = `/renders/${customFileName}`;
+        ).then(async (finalUrl) => {
+            const customFileName = `short-${projectId}-${clipId}.mp4`;
+            const proxyUrl = `/api/projects/${projectId}/video?fileName=${customFileName}`;
             const projectNow = await getProject(projectId);
             if (projectNow && projectNow.shorts) {
                 const idx = projectNow.shorts.findIndex(s => s.id === clipId);
                 if (idx !== -1) {
                     projectNow.shorts[idx].status = 'ready';
                     projectNow.shorts[idx].renderProgress = 100;
-                    projectNow.shorts[idx].downloadUrl = downloadUrl;
+                    projectNow.shorts[idx].downloadUrl = proxyUrl;
                     await updateProject(projectId, { shorts: projectNow.shorts } as any);
                 }
             }
-            console.log(`[Shorts Render] SUCCESS for clip: ${clipId}`);
+            console.log(`[Shorts Render] SUCCESS for clip: ${clipId} at Cloud URL: ${finalUrl}`);
         }).catch(async (error) => {
             console.error('[Shorts Render] Failed:', error);
             const projectNow = await getProject(projectId);

@@ -47,18 +47,20 @@ export interface SoundEffect {
 }
 
 export const SOUND_EFFECTS: SoundEffect[] = [
-    { id: 'sfx-birds', label: 'Morning Birds', category: 'nature', url: '/audio/sfx/birds.mp3' },
-    { id: 'sfx-fire', label: 'Crackling Fire', category: 'nature', url: '/audio/sfx/fire.mp3' },
-    { id: 'sfx-waves', label: 'Gentle Waves', category: 'nature', url: '/audio/sfx/waves.mp3' },
-    { id: 'sfx-wind', label: 'Soft Wind', category: 'weather', url: '/audio/sfx/wind.mp3' },
-    { id: 'sfx-space', label: 'Cosmic Hum', category: 'space', url: '/audio/sfx/space.mp3' },
-    { id: 'sfx-chime', label: 'Zen Chime', category: 'tranquil', url: '/audio/sfx/chime.mp3' }
+    { id: 'sfx-birds', label: 'Morning Birds', category: 'nature', url: 'https://assets.mixkit.co/active_storage/sfx/2440/2440-preview.mp3' },
+    { id: 'sfx-fire', label: 'Crackling Fire', category: 'nature', url: 'https://assets.mixkit.co/active_storage/sfx/1330/1330-preview.mp3' },
+    { id: 'sfx-waves', label: 'Gentle Waves', category: 'nature', url: 'https://assets.mixkit.co/active_storage/sfx/1113/1113-preview.mp3' },
+    { id: 'sfx-wind', label: 'Soft Wind', category: 'weather', url: 'https://assets.mixkit.co/active_storage/sfx/2428/2428-preview.mp3' },
+    { id: 'sfx-space', label: 'Cosmic Hum', category: 'space', url: 'https://assets.mixkit.co/active_storage/sfx/2432/2432-preview.mp3' },
+    { id: 'sfx-chime', label: 'Zen Chime', category: 'tranquil', url: 'https://assets.mixkit.co/active_storage/sfx/2400/2400-preview.mp3' }
 ];
 
 export const AMBIANCE_LAYERS: SoundEffect[] = [
-    { id: 'amb-rain', label: 'Rain on Window', category: 'weather', url: '/audio/ambience/rain.mp3' },
-    { id: 'amb-forest', label: 'Deep Forest', category: 'nature', url: '/audio/ambience/forest.mp3' },
-    { id: 'amb-brown-noise', label: 'Brown Noise', category: 'ambient', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3' } // Fallback for now
+    { id: 'amb-rain', label: 'Rain on Window', category: 'weather', url: 'https://assets.mixkit.co/active_storage/sfx/2431/2431-preview.mp3' },
+    { id: 'amb-forest', label: 'Deep Forest', category: 'nature', url: 'https://assets.mixkit.co/active_storage/sfx/1326/1326-preview.mp3' },
+    { id: 'amb-fire', label: 'Crackling Fire', category: 'nature', url: 'https://assets.mixkit.co/active_storage/sfx/1330/1330-preview.mp3' },
+    { id: 'amb-waves', label: 'Gentle Waves', category: 'nature', url: 'https://assets.mixkit.co/active_storage/sfx/1113/1113-preview.mp3' },
+    { id: 'amb-brown-noise', label: 'Brown Noise', category: 'ambient', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3' }
 ];
 
 export const audioService = {

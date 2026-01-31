@@ -6,7 +6,16 @@
             "ignore": [
                 "firebase.json",
                 "**/.*",
-                "**/node_modules/**"
+                "node_modules/**",
+                "public/renders/**",
+                "public/audio/**",
+                "tmp/**"
+            ],
+            "rewrites": [
+                {
+                    "source": "**",
+                    "function": "ssrautovideov0dev"
+                }
             ]
         }
     ]

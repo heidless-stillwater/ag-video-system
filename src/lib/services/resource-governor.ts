@@ -67,6 +67,9 @@ export class ResourceGovernor {
      * Recommended delay (ms) between intensive loop iterations.
      */
     public async getAdaptiveDelay(): Promise<void> {
+        // Skip throttling in production as loadavg is unreliable in containers
+        if (!this.isWSL) return;
+
         const pressure = this.getSystemPressure();
 
         let delayMs = 0;
@@ -79,7 +82,7 @@ export class ResourceGovernor {
         }
 
         if (delayMs > 0) {
-            console.log(`[ResourceGovernor] System pressure is ${(pressure * 100).toFixed(0)}%. Applying ${delayMs}ms throttle.`);
+            console.log(`[ResourceGovernor] WSL pressure is ${(pressure * 100).toFixed(0)}%. Applying ${delayMs}ms throttle.`);
             await new Promise(resolve => setTimeout(resolve, delayMs));
         }
     }

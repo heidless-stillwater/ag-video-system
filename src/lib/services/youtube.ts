@@ -1,5 +1,5 @@
 import { TopicSuggestion, Script } from '@/types';
-import { google, youtube_v3 } from 'googleapis';
+import { youtube as youtube_v3 } from '@googleapis/youtube';
 import { OAuth2Client } from 'google-auth-library';
 import { generateContent } from '@/lib/services/ai';
 import { Readable } from 'stream';
@@ -145,7 +145,7 @@ export const youtubeService = {
             throw new Error('YouTube OAuth2 configuration is incomplete.');
         }
 
-        return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+        return new OAuth2Client(clientId, clientSecret, redirectUri);
     },
 
     getAuthUrl(state?: string): string {
@@ -194,7 +194,7 @@ export const youtubeService = {
     async getChannelInfo(accessToken: string) {
         const client = this.getOAuth2Client();
         client.setCredentials({ access_token: accessToken });
-        const youtube = google.youtube({ version: 'v3', auth: client });
+        const youtube = youtube_v3({ version: 'v3', auth: client });
 
         const response = await youtube.channels.list({
             part: ['snippet', 'id'],
@@ -220,7 +220,7 @@ export const youtubeService = {
         try {
             const client = this.getOAuth2Client();
             client.setCredentials({ access_token: accessToken });
-            const youtube = google.youtube({ version: 'v3', auth: client });
+            const youtube = youtube_v3({ version: 'v3', auth: client });
 
             const response = await youtube.channels.list({
                 part: ['status', 'snippet'],
@@ -254,9 +254,9 @@ export const youtubeService = {
         tokens: { accessToken: string; refreshToken: string },
         videoStream: Readable,
         metadata: { title: string; description: string; tags: string[] },
-        privacy: 'public' | 'unlisted' | 'private' = 'unlisted',
+        privacy: 'public' | 'unlisted' | 'private' = 'private',
         envMode?: any,
-        onProgress?: (progress: number) => void,
+        onProgress?: (bytesRead: number) => Promise<boolean | void>,
         thumbnailUrl?: string
     ) {
         const { getConfig } = require('../config/environment');
@@ -275,7 +275,7 @@ export const youtubeService = {
             access_token: tokens.accessToken,
             refresh_token: tokens.refreshToken
         });
-        const youtube = google.youtube({ version: 'v3', auth: client });
+        const youtube = youtube_v3({ version: 'v3', auth: client });
 
         console.log(`[YouTube Service] Inserting video: ${metadata.title}`);
         const response = await youtube.videos.insert({
@@ -295,13 +295,18 @@ export const youtubeService = {
             media: {
                 body: videoStream
             }
-        }, {
-            onUploadProgress: (evt) => {
+        } as any, {
+            onUploadProgress: async (evt) => {
                 const mbUploaded = (evt.bytesRead / 1024 / 1024).toFixed(2);
                 console.log(`[YouTube Upload] Progress: ${mbUploaded} MB uploaded`);
 
                 if (onProgress) {
-                    onProgress(evt.bytesRead);
+                    const shouldCancel = await onProgress(evt.bytesRead);
+                    if (shouldCancel === true) {
+                        // This might not immediately stop the insert, but we'll try to throw in the next scene/chunk
+                        // For axios-based requests, we'd need an AbortController
+                        console.log('[YouTube Service] Cancellation requested via progress callback');
+                    }
                 }
             }
         });
@@ -317,6 +322,15 @@ export const youtubeService = {
             let success = false;
 
             while (attempt < maxRetries && !success) {
+                // Check for cancellation before each attempt
+                if (onProgress) {
+                    const shouldCancel = await onProgress(-1); // Signal we're in thumbnail phase
+                    if (shouldCancel === true) {
+                        console.log('[YouTube Service] Cancellation requested during thumbnail retry loop');
+                        break;
+                    }
+                }
+
                 attempt++;
                 try {
                     // SAFETY: Wait for YouTube indexing (increasing duration with each attempt)

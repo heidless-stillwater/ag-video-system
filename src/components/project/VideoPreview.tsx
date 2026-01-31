@@ -26,6 +26,7 @@ interface VideoPreviewProps {
     currentLanguageCode?: string;
     onLanguageChange?: (scriptId: string) => Promise<void>;
     autoDucking?: boolean;
+    onLiveVolumeChange?: (key: 'narrationVolume' | 'backgroundMusicVolume' | 'ambianceVolume' | 'globalSfxVolume' | 'autoDucking', value: number | boolean) => void;
 }
 
 /**
@@ -48,8 +49,35 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
     availableLanguages,
     currentLanguageCode,
     onLanguageChange,
-    autoDucking = true
+    autoDucking = true,
+    onLiveVolumeChange
 }) => {
+    const instanceId = useRef(Math.random().toString(36).substr(2, 5));
+    console.log(`[VideoPreview:${instanceId.current}] Rendering. tempMusicVol: ${backgroundMusicVolume ?? 0.2} (prop) -> ${React.useMemo(() => backgroundMusicVolume ?? 0.2, [backgroundMusicVolume])} vs State?`);
+
+    // Monitor audio state loop
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (!backgroundMusicVolume) return; // Reduce noise
+            console.log(`[AudioMonitor] Music: paused=${musicRef.current?.paused}, vol=${musicRef.current?.volume}, muted=${musicRef.current?.muted}, src=${musicRef.current?.src?.slice(-20)}`);
+            console.log(`[AudioMonitor] Narration: paused=${audioRef.current?.paused}, vol=${audioRef.current?.volume}, muted=${audioRef.current?.muted}`);
+        }, 2000);
+        return () => clearInterval(interval);
+    }, [backgroundMusicVolume]);
+
+    // Cleanup function to stop all audio
+    const stopAllAudio = () => {
+        console.log(`[VideoPreview:${instanceId.current}] Stopping all audio`);
+        audioRef.current?.pause();
+        musicRef.current?.pause();
+        ambianceRef.current?.pause();
+        sceneSfxRef.current?.pause();
+        sfxRef.current?.pause();
+        if (audioRef.current) audioRef.current.currentTime = 0;
+        if (musicRef.current) musicRef.current.currentTime = 0;
+        if (ambianceRef.current) ambianceRef.current.currentTime = 0;
+        if (sceneSfxRef.current) sceneSfxRef.current.currentTime = 0;
+    };
     const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLooping, setIsLooping] = useState(false);
@@ -68,10 +96,12 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
 
     // Temporary audio levels (for live preview adjustment)
     const [tempNarrationVol, setTempNarrationVol] = useState(narrationVolume);
-    const [tempMusicVol, setTempMusicVol] = useState(backgroundMusicVolume || 0.2);
-    const [tempAmbianceVol, setTempAmbianceVol] = useState(ambianceVolume || 0.1);
+    const [tempMusicVol, setTempMusicVol] = useState(backgroundMusicVolume ?? 0.2);
+    const [tempAmbianceVol, setTempAmbianceVol] = useState(ambianceVolume ?? 0.1);
     const [tempSfxVol, setTempSfxVol] = useState(globalSfxVolume);
     const [tempAutoDucking, setTempAutoDucking] = useState(autoDucking);
+
+    console.log(`[VideoPreview:${instanceId.current}] State: Music=${tempMusicVol}, Ambiance=${tempAmbianceVol}, Sfx=${tempSfxVol}, Ducking=${tempAutoDucking}`);
 
     // Double Buffer State
     const [buffer, setBuffer] = useState<{
@@ -106,13 +136,39 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
 
     const currentScene = scenes[currentSceneIndex];
 
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            stopAllAudio();
+        };
+    }, []);
+
     const sectionId = currentScene?.sectionId;
 
     const safePlay = (el: HTMLAudioElement | null, resetTime: boolean = false) => {
         if (!el) return;
+
+        // CRITICAL: Check if element is still in the DOM before playing
+        if (!el.isConnected) {
+            console.log('[VideoPreview] Skipping play - element not in DOM');
+            return;
+        }
+
         if (resetTime) el.currentTime = 0;
+
+        // Force state for diagnostics
+        el.muted = false;
+
         if (el.src && el.src !== window.location.href) {
-            el.play().catch(() => { });
+            console.log(`[VideoPreview] Resuming audio: ${el.src.slice(-20)} (Dur: ${el.duration})`);
+            el.play().catch((err) => {
+                // Ignore AbortError if element was removed during play attempt
+                if (err.name === 'AbortError') {
+                    console.log('[VideoPreview] Play aborted - element removed from DOM');
+                } else {
+                    console.error('[VideoPreview] Playback failed:', err);
+                }
+            });
         }
     };
 
@@ -158,6 +214,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
         currentSceneIndexRef.current = 0;
         setAbsoluteCurrentTime(0);
         absoluteCurrentTimeRef.current = 0;
+        setAudioError(null);
         setIsPlaying(true);
 
         // Wait for the new audio element to mount
@@ -167,6 +224,18 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
             safePlay(ambianceRef.current, true);
         }, 50);
     };
+
+    // Sync local state with incoming props (e.g. from external page mixer)
+    // We use a small threshold check to prevent floating-point jitter from snapping sliders back during drags
+    useEffect(() => {
+        const thresholdDiff = (a: number, b: number) => Math.abs(a - b) > 0.01;
+
+        if (thresholdDiff(tempNarrationVol, narrationVolume)) setTempNarrationVol(narrationVolume);
+        if (thresholdDiff(tempMusicVol, backgroundMusicVolume ?? 0.2)) setTempMusicVol(backgroundMusicVolume ?? 0.2);
+        if (thresholdDiff(tempAmbianceVol, ambianceVolume ?? 0.1)) setTempAmbianceVol(ambianceVolume ?? 0.1);
+        if (thresholdDiff(tempSfxVol, globalSfxVolume)) setTempSfxVol(globalSfxVolume);
+        if (tempAutoDucking !== autoDucking) setTempAutoDucking(autoDucking);
+    }, [narrationVolume, backgroundMusicVolume, ambianceVolume, globalSfxVolume, autoDucking]);
 
     const handleAudioEnded = () => {
         const nextIdx = scenes.findIndex((s, i) => i > currentSceneIndex && s.sectionId !== activeSectionIdRef.current);
@@ -197,6 +266,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
         if (!currentScene) return;
 
         if (currentScene.id !== lastSceneIdRef.current) {
+            setAudioError(null);
             const nextImg = currentScene.imageUrl;
             setIsImageReady(false);
 
@@ -222,10 +292,25 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
         }
 
         // Scene-Specific SFX (The AI Sound Design)
+        if (sceneSfxRef.current && currentScene?.sfxUrl) {
+            const calculatedVolume = (tempSfxVol ?? 0.4) * (currentScene.sfxVolume ?? 1.0);
+            sceneSfxRef.current.volume = calculatedVolume;
+        }
+
         if (isPlaying && sceneSfxRef.current && currentScene?.sfxUrl) {
             const currentSrc = sceneSfxRef.current.getAttribute('src');
+            const calculatedVolume = (tempSfxVol ?? 0.4) * (currentScene.sfxVolume ?? 1.0);
+
+            console.log('[VideoPreview] Scene SFX:', {
+                url: currentScene.sfxUrl,
+                tempSfxVol,
+                sceneMultiplier: currentScene.sfxVolume,
+                calculatedVolume,
+                isPlaying: !sceneSfxRef.current.paused
+            });
 
             if (currentSrc !== currentScene.sfxUrl && sceneSfxRef.current.src !== new URL(currentScene.sfxUrl, window.location.href).href) {
+                console.log('[VideoPreview] Loading new scene SFX:', currentScene.sfxUrl);
                 sceneSfxRef.current.src = currentScene.sfxUrl;
                 sceneSfxRef.current.loop = true;
 
@@ -242,16 +327,14 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                     safePlay(sceneSfxRef.current);
                 }
             } else if (sceneSfxRef.current.paused) {
+                console.log('[VideoPreview] Resuming paused scene SFX');
                 safePlay(sceneSfxRef.current);
             }
-
-            // Always keep volume synced, applying scene-specific scaling
-            sceneSfxRef.current.volume = (tempSfxVol ?? 0.4) * (currentScene.sfxVolume ?? 1.0);
         } else if (sceneSfxRef.current && !currentScene?.sfxUrl) {
             sceneSfxRef.current.pause();
             sceneSfxRef.current.src = '';
         }
-    }, [currentSceneIndex, currentScene?.id, isPlaying]);
+    }, [currentSceneIndex, currentScene?.id, isPlaying, tempSfxVol]);
 
     const handleImageLoad = () => {
         requestAnimationFrame(() => {
@@ -262,20 +345,35 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
         });
     };
 
+    // Safety timeout to prevent black screens if images hang
+    useEffect(() => {
+        if (!isImageReady) {
+            const timer = setTimeout(() => {
+                console.warn('[VideoPreview] Image load timed out, forcing transition.');
+                setIsImageReady(true);
+                setBuffer(prev => ({ ...prev, zoomA: prev.active === 'A', zoomB: prev.active === 'B' }));
+            }, 4000);
+            return () => clearTimeout(timer);
+        }
+    }, [isImageReady]);
+
     // Transport
     const togglePlayback = () => {
         if (isPlaying) {
+            console.log('[VideoPreview] Pausing all audio');
             audioRef.current?.pause();
             musicRef.current?.pause();
             ambianceRef.current?.pause();
             sceneSfxRef.current?.pause();
+            setIsPlaying(false);
         } else {
+            console.log('[VideoPreview] Starting playback');
             safePlay(audioRef.current);
             safePlay(musicRef.current);
             safePlay(ambianceRef.current);
             safePlay(sceneSfxRef.current);
+            setIsPlaying(true);
         }
-        setIsPlaying(!isPlaying);
     };
 
     const seekTo = (time: number) => {
@@ -350,7 +448,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
             : "fixed inset-0 z-[100] bg-[#020617] overflow-y-auto select-none custom-scrollbar"
         }>
             {!isInline && (
-                <button onClick={onClose} className="fixed top-8 right-8 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white z-[120] border border-white/10 backdrop-blur-md shadow-xl">
+                <button onClick={() => { stopAllAudio(); onClose(); }} className="fixed top-8 right-8 p-3 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white z-[120] border border-white/10 backdrop-blur-md shadow-xl">
                     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
             )}
@@ -376,6 +474,10 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                             <img
                                 src={buffer.imgA}
                                 onLoad={buffer.active === 'A' ? handleImageLoad : undefined}
+                                onError={() => {
+                                    console.warn('[VideoPreview] Failed to load image A:', buffer.imgA);
+                                    if (buffer.active === 'A') handleImageLoad();
+                                }}
                                 className={`w-full h-full object-cover transition-transform duration-[45000ms] ease-linear ${buffer.zoomA ? 'scale-110 translate-x-2' : 'scale-100'}`}
                                 alt=""
                             />
@@ -392,6 +494,10 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                             <img
                                 src={buffer.imgB}
                                 onLoad={buffer.active === 'B' ? handleImageLoad : undefined}
+                                onError={() => {
+                                    console.warn('[VideoPreview] Failed to load image B:', buffer.imgB);
+                                    if (buffer.active === 'B') handleImageLoad();
+                                }}
                                 className={`w-full h-full object-cover transition-transform duration-[45000ms] ease-linear ${buffer.zoomB ? 'scale-110 translate-x-2' : 'scale-100'}`}
                                 alt=""
                             />
@@ -538,8 +644,8 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                     <button
                                         onClick={() => {
                                             setTempNarrationVol(narrationVolume);
-                                            setTempMusicVol(backgroundMusicVolume || 0.2);
-                                            setTempAmbianceVol(ambianceVolume || 0.1);
+                                            setTempMusicVol(backgroundMusicVolume ?? 0.2);
+                                            setTempAmbianceVol(ambianceVolume ?? 0.1);
                                             setTempSfxVol(globalSfxVolume);
                                             setTempAutoDucking(autoDucking);
                                         }}
@@ -594,7 +700,11 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                         max="1"
                                         step="0.05"
                                         value={tempNarrationVol}
-                                        onChange={(e) => setTempNarrationVol(parseFloat(e.target.value))}
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            setTempNarrationVol(val);
+                                            onLiveVolumeChange?.('narrationVolume', val);
+                                        }}
                                         className="w-full accent-purple-500"
                                     />
                                 </div>
@@ -611,7 +721,11 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                         max="1"
                                         step="0.05"
                                         value={tempMusicVol}
-                                        onChange={(e) => setTempMusicVol(parseFloat(e.target.value))}
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            setTempMusicVol(val);
+                                            onLiveVolumeChange?.('backgroundMusicVolume', val);
+                                        }}
                                         className="w-full accent-purple-500"
                                     />
                                 </div>
@@ -628,7 +742,11 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                         max="1"
                                         step="0.05"
                                         value={tempAmbianceVol}
-                                        onChange={(e) => setTempAmbianceVol(parseFloat(e.target.value))}
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            setTempAmbianceVol(val);
+                                            onLiveVolumeChange?.('ambianceVolume', val);
+                                        }}
                                         className="w-full accent-purple-500"
                                     />
                                 </div>
@@ -645,7 +763,11 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                         max="1"
                                         step="0.05"
                                         value={tempSfxVol}
-                                        onChange={(e) => setTempSfxVol(parseFloat(e.target.value))}
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            setTempSfxVol(val);
+                                            onLiveVolumeChange?.('globalSfxVolume', val);
+                                        }}
                                         className="w-full accent-purple-500"
                                     />
                                 </div>
@@ -658,7 +780,11 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                                     <span className="text-[9px] text-slate-500 uppercase tracking-tighter">Smoothly dip background layers during narration</span>
                                 </div>
                                 <button
-                                    onClick={() => setTempAutoDucking(!tempAutoDucking)}
+                                    onClick={() => {
+                                        const newVal = !tempAutoDucking;
+                                        setTempAutoDucking(newVal);
+                                        onLiveVolumeChange?.('autoDucking', newVal);
+                                    }}
                                     className={`w-12 h-6 rounded-full p-1 transition-all duration-300 ${tempAutoDucking ? 'bg-purple-600 shadow-lg shadow-purple-500/20' : 'bg-slate-700'}`}
                                 >
                                     <div className={`w-4 h-4 bg-white rounded-full transition-transform duration-300 ${tempAutoDucking ? 'translate-x-6' : 'translate-x-0'}`} />
@@ -708,13 +834,6 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                     ref={musicRef}
                     src={backgroundMusicUrl}
                     loop
-                    onPlay={() => {
-                        if (musicRef.current) {
-                            musicRef.current.volume = isNarratorActuallyPlaying ?
-                                (tempMusicVol ?? 0.2) * 0.3 :
-                                (tempMusicVol ?? 0.2);
-                        }
-                    }}
                     onError={(e) => {
                         const target = e.target as HTMLAudioElement;
                         const error = target.error;
@@ -728,6 +847,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
             <DuckingEffect
                 isEnabled={tempAutoDucking}
                 isNarratorPlaying={isNarratorActuallyPlaying}
+                isPlaying={isPlaying}
                 musicRef={musicRef}
                 ambianceRef={ambianceRef}
                 musicBaseVolume={tempMusicVol ?? 0.2}
@@ -735,9 +855,9 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
             />
 
             {/* Master Volume Sync Engine */}
-            <VolumeSync channel="Narration" refEl={audioRef} volume={tempNarrationVol} />
-            <VolumeSync channel="Ambiance" refEl={ambianceRef} volume={tempAmbianceVol ?? 0.1} />
-            <VolumeSync channel="SFX" refEl={sceneSfxRef} volume={tempSfxVol} />
+            <VolumeSync channel="Narration" refEl={audioRef} volume={tempNarrationVol} trigger={currentScene?.sectionId} />
+            {/* Note: Scene SFX volume is managed in the scene change useEffect to apply scene-specific multipliers */}
+            {/* Note: Music and Ambiance volumes are managed by DuckingEffect to apply intelligent ducking */}
 
             {/* Transition SFX */}
             <audio
@@ -769,54 +889,69 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
 const DuckingEffect: React.FC<{
     isEnabled: boolean;
     isNarratorPlaying: boolean;
+    isPlaying: boolean;
     musicRef: React.RefObject<HTMLAudioElement | null>;
     ambianceRef: React.RefObject<HTMLAudioElement | null>;
     musicBaseVolume: number;
     ambianceBaseVolume: number;
-}> = ({ isEnabled, isNarratorPlaying, musicRef, ambianceRef, musicBaseVolume, ambianceBaseVolume }) => {
+}> = ({ isEnabled, isNarratorPlaying, isPlaying, musicRef, ambianceRef, musicBaseVolume, ambianceBaseVolume }) => {
     useEffect(() => {
-        if (!isEnabled) {
-            // Restore full volumes if ducking is disabled
-            if (musicRef.current) musicRef.current.volume = musicBaseVolume;
-            if (ambianceRef.current) ambianceRef.current.volume = ambianceBaseVolume;
-            return;
-        }
+        // "The Enforcer" - Polling loop to ensure volume is applied regardless of race conditions
+        const interval = setInterval(() => {
+            // Case 1: Disabled or Stopped -> Enforce Base Volume
+            if (!isEnabled || !isPlaying) {
+                if (musicRef.current) {
+                    // Ensure not muted (sanity check)
+                    if (musicRef.current.muted) musicRef.current.muted = false;
 
-        const targetMusicVol = isNarratorPlaying ? musicBaseVolume * 0.35 : musicBaseVolume;
-        const targetAmbianceVol = isNarratorPlaying ? ambianceBaseVolume * 0.6 : ambianceBaseVolume;
-
-        // Smoothed volume transition
-        const fadeAudio = (el: HTMLAudioElement | null, target: number) => {
-            if (!el) return;
-            const current = el.volume;
-            const steps = 15;
-            const stepTime = 30;
-            const diff = target - current;
-
-            let step = 0;
-            const interval = setInterval(() => {
-                if (step >= steps || !el) {
-                    clearInterval(interval);
-                    if (el) el.volume = target;
-                    return;
+                    if (Math.abs(musicRef.current.volume - musicBaseVolume) > 0.01) {
+                        console.log(`[DuckingEffect] Case 1 (Disabled): Forcing Music ${musicBaseVolume} (was ${musicRef.current.volume})`);
+                        musicRef.current.volume = musicBaseVolume;
+                    }
                 }
-                el.volume = Math.max(0, Math.min(1, current + (diff * (step / steps))));
-                step++;
-            }, stepTime);
-            return () => clearInterval(interval);
-        };
+                if (ambianceRef.current) {
+                    // Ensure not muted (sanity check)
+                    if (ambianceRef.current.muted) ambianceRef.current.muted = false;
 
-        const stopMusicFade = fadeAudio(musicRef.current, targetMusicVol);
-        const stopAmbianceFade = fadeAudio(ambianceRef.current, targetAmbianceVol);
+                    if (Math.abs(ambianceRef.current.volume - ambianceBaseVolume) > 0.01) {
+                        console.log(`[DuckingEffect] Case 1 (Disabled): Forcing Ambiance ${ambianceBaseVolume} (was ${ambianceRef.current.volume})`);
+                        ambianceRef.current.volume = ambianceBaseVolume;
+                    }
+                }
+                return;
+            }
 
-        return () => {
-            if (stopMusicFade) stopMusicFade();
-            if (stopAmbianceFade) stopAmbianceFade();
-        };
-    }, [isEnabled, isNarratorPlaying, musicBaseVolume, ambianceBaseVolume, musicRef, ambianceRef]);
+            // Case 2: Playing & Enabled -> Enforce Ducking Logic
+            const targetMusicVol = isNarratorPlaying ? musicBaseVolume * 0.35 : musicBaseVolume;
+            const targetAmbianceVol = isNarratorPlaying ? ambianceBaseVolume * 0.6 : ambianceBaseVolume;
+
+            if (musicRef.current) {
+                // FORCE RESCUE
+                if (musicRef.current.muted) musicRef.current.muted = false;
+
+                // Apply update if significant difference (avoid micro-jitter)
+                if (Math.abs(musicRef.current.volume - targetMusicVol) > 0.001) {
+                    // console.log(`[DuckingEffect] Enforcing Music Vol: ${targetMusicVol} (was ${musicRef.current.volume})`);
+                    musicRef.current.volume = targetMusicVol;
+                }
+            }
+            if (ambianceRef.current) {
+                if (ambianceRef.current.muted) ambianceRef.current.muted = false;
+
+                if (Math.abs(ambianceRef.current.volume - targetAmbianceVol) > 0.001) {
+                    // console.log(`[DuckingEffect] Enforcing Ambiance Vol: ${targetAmbianceVol} (was ${ambianceRef.current.volume})`);
+                    ambianceRef.current.volume = targetAmbianceVol;
+                }
+            }
+        }, 100); // Check every 100ms
+
+        return () => clearInterval(interval);
+    }, [isEnabled, isNarratorPlaying, isPlaying, musicBaseVolume, ambianceBaseVolume]);
 
     return null;
 };
+
+
 
 const AmbianceSync: React.FC<{
     ambianceRef: React.RefObject<HTMLAudioElement | null>;
@@ -844,9 +979,9 @@ const SubtitleOverlay: React.FC<{
 
     const getStyle = () => {
         switch (styleType) {
-            case 'bold': return { fontSize: 'clamp(20px, 3.2cqw, 64px)', fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '-0.02em' };
-            case 'classic': return { fontSize: 'clamp(18px, 2.8cqw, 54px)', fontWeight: 500 };
-            default: return { fontSize: 'clamp(16px, 2.4cqw, 48px)', fontWeight: 300, letterSpacing: '0.05em', color: 'rgba(255,255,255,0.8)' };
+            case 'bold': return { fontSize: '3.2cqw', fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: '-0.02em' };
+            case 'classic': return { fontSize: '2.8cqw', fontWeight: 500 };
+            default: return { fontSize: '2.4cqw', fontWeight: 300, letterSpacing: '0.05em', color: 'rgba(255,255,255,0.8)' };
         }
     };
 
@@ -882,12 +1017,17 @@ const VolumeSync: React.FC<{
     channel: string;
     refEl: React.RefObject<HTMLAudioElement | null>;
     volume: number;
-}> = ({ channel, refEl, volume }) => {
+    trigger?: string;
+}> = ({ channel, refEl, volume, trigger }) => {
     useEffect(() => {
-        if (!refEl.current) return;
-        console.log(`[VideoPreview] Syncing ${channel} volume to:`, volume);
-        refEl.current.volume = volume;
-    }, [volume, refEl]);
+        if (!refEl.current) {
+            console.log(`[VolumeSync] ${channel}: No audio element found`);
+            return;
+        }
+        const clampedVolume = Math.max(0, Math.min(1, volume));
+        console.log(`[VolumeSync] ${channel}: Setting volume from ${refEl.current.volume} to ${clampedVolume}`);
+        refEl.current.volume = clampedVolume;
+    }, [volume, refEl, channel, trigger]);
 
     return null;
 };

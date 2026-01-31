@@ -42,11 +42,21 @@ export async function POST(req: NextRequest) {
             title,
             description,
             topicId,
-            status,
-            research,
-            estimatedDuration,
-            estimatedCost,
-            visualStyle
+            status: status || 'draft',
+            research: research || {
+                sources: [],
+                facts: [],
+                outline: [],
+                completionPercentage: 0,
+            },
+            estimatedDuration: estimatedDuration || 120,
+            estimatedCost: estimatedCost || 0,
+            visualStyle: visualStyle || 'studio-ghibli',
+            backgroundMusicUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // Space Drift
+            backgroundMusicVolume: 0.2,
+            ambianceVolume: 0.1,
+            narrationVolume: 1.0,
+            globalSfxVolume: 0.4,
         });
 
         return NextResponse.json({ success: true, projectId });

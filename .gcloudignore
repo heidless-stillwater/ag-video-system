@@ -1,0 +1,11 @@
+.gcloudignore
+.git
+.gitignore
+node_modules/
+public/renders/
+public/audio/
+tmp/
+.next/
+.firebase/
+.env.local
+service-account.json

@@ -1,10 +1,11 @@
 import { VertexAI } from '@google-cloud/vertexai';
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
-import { google } from 'googleapis';
+import { youtube } from '@googleapis/youtube';
 import { db, storage } from '@/lib/firebase-admin';
 import { resourceGovernor } from './resource-governor';
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
 
 export interface HealthCheckResult {
     service: string;
@@ -24,13 +25,16 @@ export async function checkVertexAI(): Promise<HealthCheckResult> {
     try {
         const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
         const location = 'us-central1';
-        const keyFile = path.resolve(process.cwd(), 'service-account.json');
+        const saPath = path.resolve(process.cwd(), 'service-account.json');
+        const keyFile = fs.existsSync(saPath) ? saPath : undefined;
 
         const vertexAI = new VertexAI({
             project: projectId!,
             location,
-            googleAuthOptions: {
-                keyFile: keyFile,
+            googleAuthOptions: keyFile ? {
+                keyFile,
+                scopes: ['https://www.googleapis.com/auth/cloud-platform']
+            } : {
                 scopes: ['https://www.googleapis.com/auth/cloud-platform']
             }
         });
@@ -142,14 +146,14 @@ export async function checkFirestore(): Promise<HealthCheckResult> {
 export async function checkYouTubeAPI(): Promise<HealthCheckResult> {
     const startTime = Date.now();
     try {
-        const youtube = google.youtube({
+        const youtubeClient = youtube({
             version: 'v3',
-            auth: process.env.YOUTUBE_API_KEY
+            auth: process.env.YOUTUBE_API_KEY as string
         });
 
         // Simple quota check - list categories
         const result = await Promise.race([
-            youtube.videoCategories.list({
+            youtubeClient.videoCategories.list({
                 part: ['snippet'],
                 regionCode: 'US'
             }),

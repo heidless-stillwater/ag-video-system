@@ -23,20 +23,6 @@ const db = getFirestore(app, 'autovideo-db-0');
 const storage = getStorage(app);
 const functions = getFunctions(app);
 
-// Connect to emulators in DEV mode
-const config = getConfig();
-if (config.firebase.useEmulators && typeof window !== 'undefined') {
-    try {
-        // Connect only if not already connected (prevents error on hot reload)
-        connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
-        connectFirestoreEmulator(db, 'localhost', 8080);
-        connectStorageEmulator(storage, 'localhost', 9199);
-        connectFunctionsEmulator(functions, 'localhost', 5001);
-        console.log('🔧 Connected to Firebase emulators');
-    } catch (error) {
-        console.log('Emulators already connected or not available');
-    }
-}
 
 // Collection names
 export const COLLECTIONS = {

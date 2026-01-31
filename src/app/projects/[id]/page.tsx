@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, use } from 'react';
+import React, { useEffect, useState, use, useRef } from 'react';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { projectService } from '@/lib/services/firestore';
@@ -51,17 +51,37 @@ export default function ProjectDetailPage() {
     const { user: currentUser, loading: authLoading } = useAuth();
     const [isConnectingYouTube, setIsConnectingYouTube] = useState(false);
     const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
+    const isPublishModalOpenRef = useRef(false);
+
+    // Sync ref with state
+    useEffect(() => {
+        isPublishModalOpenRef.current = isPublishModalOpen;
+    }, [isPublishModalOpen]);
     const [isGeneratingMetadata, setIsGeneratingMetadata] = useState(false);
     const [publishMetadata, setPublishMetadata] = useState<{ title: string; description: string; tags: string[] } | null>(null);
     const [isPublishing, setIsPublishing] = useState(false);
     const [isOptimizing, setIsOptimizing] = useState(false);
     const [isRendering, setIsRendering] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
     const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+    const [publishDisplayProgress, setPublishDisplayProgress] = useState(0);
+
+    // Ensure publish progress only increases
+    useEffect(() => {
+        if (project?.publishProgress !== undefined && project.publishProgress > publishDisplayProgress) {
+            setPublishDisplayProgress(project.publishProgress);
+        }
+        if (project?.status !== 'publishing' && project?.status !== 'published') {
+            setPublishDisplayProgress(0);
+        }
+    }, [project?.publishProgress, project?.status, publishDisplayProgress]);
     const [isInlinePreviewActive, setIsInlinePreviewActive] = useState(false);
     const [activeViewType, setActiveViewType] = useState<'preview' | 'mp4'>('preview');
     const [costLogs, setCostLogs] = useState<UsageLog[]>([]);
     const [projectCost, setProjectCost] = useState(0);
     const [isDirectorDrawerOpen, setIsDirectorDrawerOpen] = useState(false);
+    const volumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const pendingVolumeUpdatesRef = useRef<Record<string, any>>({});
 
     // Global Launchpad (Dubbing) State
     const [isDubbing, setIsDubbing] = useState(false);
@@ -224,6 +244,10 @@ export default function ProjectDetailPage() {
                         setProject(prev => {
                             // JSON stringify comparison is primitive but effective for this scale
                             if (JSON.stringify(prev) !== JSON.stringify(data)) {
+                                // Auto-open publish modal if status changed to publishing
+                                if (data.status === 'publishing' && prev?.status !== 'publishing' && !isPublishModalOpenRef.current) {
+                                    handleOpenPublishModal();
+                                }
                                 return data;
                             }
                             return prev;
@@ -251,7 +275,14 @@ export default function ProjectDetailPage() {
 
                         // Update state securely
                         setProject(prev => {
-                            return updatedProject;
+                            if (JSON.stringify(prev) !== JSON.stringify(updatedProject)) {
+                                // Auto-open publish modal if status changed to publishing
+                                if (updatedProject.status === 'publishing' && prev?.status !== 'publishing' && !isPublishModalOpenRef.current) {
+                                    handleOpenPublishModal();
+                                }
+                                return updatedProject;
+                            }
+                            return prev;
                         });
                     }
                 },
@@ -273,7 +304,6 @@ export default function ProjectDetailPage() {
         };
     }, [projectId, currentUser?.id, authLoading]);
 
-    // Fetch YouTube channel status for thumbnail verification
     useEffect(() => {
         if (currentUser?.settings.youtubeConnected && projectId) {
             fetch(`/api/projects/${projectId}/youtube/status`)
@@ -282,6 +312,13 @@ export default function ProjectDetailPage() {
                 .catch(err => console.warn('Could not fetch YouTube status:', err));
         }
     }, [projectId, currentUser?.settings.youtubeConnected]);
+
+    // Initial check to auto-open publish modal if project is already publishing
+    useEffect(() => {
+        if (project?.status === 'publishing' && !isPublishModalOpenRef.current) {
+            handleOpenPublishModal();
+        }
+    }, [project?.status]);
 
     // Recalculate timeline whenever script changes
     useEffect(() => {
@@ -496,22 +533,57 @@ export default function ProjectDetailPage() {
         }
     };
 
-    const handleVolumeChange = async (key: 'narrationVolume' | 'backgroundMusicVolume' | 'ambianceVolume' | 'globalSfxVolume' | 'autoDucking', value: number | boolean) => {
+    const handleVolumeChange = (key: 'narrationVolume' | 'backgroundMusicVolume' | 'ambianceVolume' | 'globalSfxVolume' | 'autoDucking', value: number | boolean) => {
         if (!project) return;
-        try {
-            const updates: any = { [key]: value };
-            if (key === 'autoDucking') {
-                updates.audioSettings = {
-                    ...project.audioSettings,
-                    autoDucking: value as boolean,
-                    masterVolume: project.audioSettings?.masterVolume ?? 1.0
-                };
-            }
-            await projectService.updateProject(project.id, updates);
-            await loadProjectAndScript();
-        } catch (err: any) {
-            setError(`Failed to update ${key}: ` + err.message);
+
+        // 1. Optimistic local update to ensure instant UI response in both mixers
+        const updatedProject = {
+            ...project,
+            [key]: value
+        };
+
+        if (key === 'autoDucking') {
+            updatedProject.audioSettings = {
+                ...project.audioSettings,
+                autoDucking: value as boolean,
+                masterVolume: project.audioSettings?.masterVolume ?? 1.0
+            };
         }
+
+        setProject(updatedProject as Project);
+
+        // 2. Debounce the actual database write
+        if (volumeTimeoutRef.current) {
+            clearTimeout(volumeTimeoutRef.current);
+        }
+
+        pendingVolumeUpdatesRef.current = {
+            ...pendingVolumeUpdatesRef.current,
+            [key]: value
+        };
+
+        if (key === 'autoDucking') {
+            pendingVolumeUpdatesRef.current.audioSettings = {
+                ...project.audioSettings,
+                autoDucking: value as boolean,
+                masterVolume: project.audioSettings?.masterVolume ?? 1.0
+            };
+        }
+
+        volumeTimeoutRef.current = setTimeout(async () => {
+            try {
+                const finalUpdates = { ...pendingVolumeUpdatesRef.current };
+                pendingVolumeUpdatesRef.current = {};
+                await projectService.updateProject(project.id, finalUpdates);
+
+                // If in mock mode, manually reload since there's no real-time listener
+                if (currentUser?.id === 'mock-user-123') {
+                    await loadProjectAndScript();
+                }
+            } catch (err: any) {
+                setError(`Failed to sync audio settings: ` + err.message);
+            }
+        }, 300); // 300ms debounce is snappy enough but prevents flood
     };
 
     const handleSubtitleToggle = async () => {
@@ -564,7 +636,7 @@ export default function ProjectDetailPage() {
         }, 'Generate AI Script?', 'This will generate a sleep-optimized documentary script section by section. This is multiple real Gemini API calls.');
     };
 
-    const handleGenerateAudio = async (sectionId: string) => {
+    const handleGenerateAudio = async (sectionId: string, voiceProfile?: Project['voiceProfile']) => {
         if (!project || !script) return;
         interceptAction(async () => {
             setGeneratingAudioId(sectionId);
@@ -576,7 +648,7 @@ export default function ProjectDetailPage() {
                     body: JSON.stringify({
                         scriptId: script.id,
                         sectionId,
-                        voiceProfile: project?.voiceProfile || script.voiceProfile || 'standard'
+                        voiceProfile: voiceProfile || project?.voiceProfile || script.voiceProfile || 'standard'
                     }),
                 });
 
@@ -619,7 +691,7 @@ export default function ProjectDetailPage() {
         }
     };
 
-    const handleGenerateAllAudio = async () => {
+    const handleGenerateAllAudio = async (voiceProfile?: Project['voiceProfile']) => {
         if (!project || !script) return;
         setIsGeneratingAllAudio(true);
         setError(null);
@@ -636,7 +708,7 @@ export default function ProjectDetailPage() {
                     body: JSON.stringify({
                         scriptId: script.id,
                         sectionId: section.id,
-                        voiceProfile: project?.voiceProfile || script.voiceProfile || 'standard'
+                        voiceProfile: voiceProfile || project?.voiceProfile || script.voiceProfile || 'standard'
                     }),
                 });
 
@@ -1100,15 +1172,49 @@ export default function ProjectDetailPage() {
         }
     };
 
+    const handleDownloadMP4 = async () => {
+        if (!project?.downloadUrl) return;
+
+        setIsDownloading(true);
+        try {
+            const response = await fetch(project.downloadUrl);
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Documentary_${project.title.replace(/\s+/g, '_')}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err: any) {
+            console.error('Download failed:', err);
+            setError('Download failed: ' + err.message);
+        } finally {
+            setIsDownloading(false);
+        }
+    };
+
     const handleOpenPublishModal = async () => {
         if (!project || !script) return;
 
         // Use existing SEO metadata if available
         if (project.seoMetadata) {
             setPublishMetadata({
-                title: project.seoMetadata.selectedTitle || project.seoMetadata.titles[0],
-                description: project.seoMetadata.description,
-                tags: project.seoMetadata.tags
+                title: project.seoMetadata.selectedTitle || project.seoMetadata.titles[0] || project.title,
+                description: project.seoMetadata.description || project.description || '',
+                tags: project.seoMetadata.tags || []
+            });
+            setIsPublishModalOpen(true);
+            return;
+        }
+
+        // If already publishing but metadata is somehow missing, use defaults and open
+        if (project.status === 'publishing') {
+            setPublishMetadata({
+                title: project.title,
+                description: project.description || '',
+                tags: []
             });
             setIsPublishModalOpen(true);
             return;
@@ -1172,6 +1278,29 @@ export default function ProjectDetailPage() {
             setError('Publishing failed: ' + err.message);
         } finally {
             setIsPublishing(false);
+        }
+    };
+
+    const handleCancelPublish = async () => {
+        if (!project) return;
+        try {
+            const response = await fetch(`/api/projects/${project.id}/youtube/cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                console.log('[Cancel Publish] Upload cancellation initiated');
+                setIsPublishing(false); // Immediate UI feedback
+                // Refresh project state
+                await loadProjectAndScript();
+            } else {
+                throw new Error(data.error || 'Cancellation failed');
+            }
+        } catch (err: any) {
+            console.error('[Cancel Publish] Error:', err.message);
+            setError('Cancellation failed: ' + err.message);
         }
     };
 
@@ -1572,6 +1701,7 @@ export default function ProjectDetailPage() {
                                                     subtitleStyle={project.subtitleStyle || 'minimal'}
                                                     autoDucking={project.audioSettings?.autoDucking ?? true}
                                                     onClose={() => setIsInlinePreviewActive(false)}
+                                                    onLiveVolumeChange={handleVolumeChange}
                                                     onSaveAudioSettings={async (settings) => {
                                                         await projectService.updateProject(project.id, {
                                                             narrationVolume: settings.narrationVolume,
@@ -1879,8 +2009,17 @@ export default function ProjectDetailPage() {
                                                         </div>
                                                         <span className="text-sm font-black text-white uppercase tracking-widest">{project.mediaProgress === 100 ? 'Finalizing...' : 'Synthesizing Visual Assets...'}</span>
                                                     </div>
-                                                    <div className="px-2 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded-md">
-                                                        <span className="text-xs font-mono font-bold text-purple-400">{project.mediaProgress || 0}%</span>
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="px-2 py-0.5 bg-purple-500/10 border border-purple-500/20 rounded-md">
+                                                            <span className="text-xs font-mono font-bold text-purple-400">{project.mediaProgress || 0}%</span>
+                                                        </div>
+                                                        <button
+                                                            onClick={handleCancelMedia}
+                                                            className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-full transition-colors border border-red-500/20"
+                                                            title="Cancel Generation"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                                                        </button>
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -1889,14 +2028,6 @@ export default function ProjectDetailPage() {
                                                         {project.mediaMessage || 'Initializing cinematic generation...'}
                                                     </p>
                                                 </div>
-                                                {/* Cancel Button */}
-                                                <button
-                                                    onClick={handleCancelMedia}
-                                                    className="absolute top-4 right-4 p-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-full transition-colors border border-red-500/20"
-                                                    title="Cancel Generation"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
-                                                </button>
                                             </div>
                                         )}
 
@@ -2012,28 +2143,37 @@ export default function ProjectDetailPage() {
                                         )}
 
                                         {project.downloadUrl && (
-                                            <a
-                                                href={project.downloadUrl}
-                                                download={`Documentary_${project.title.replace(/\s+/g, '_')}.mp4`}
-                                                className="px-8 py-4 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-500/20 transition-all flex items-center gap-3"
+                                            <button
+                                                onClick={handleDownloadMP4}
+                                                disabled={isDownloading}
+                                                className={`px-8 py-4 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white rounded-2xl font-bold shadow-lg shadow-green-500/20 transition-all flex items-center gap-3 ${isDownloading ? 'animate-pulse' : ''}`}
                                             >
-                                                <span>⬇️ Download MP4 Movie</span>
-                                            </a>
+                                                {isDownloading ? (
+                                                    <>
+                                                        <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                                                        <span>Downloading...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <span>⬇️ Download MP4 Movie</span>
+                                                    </>
+                                                )}
+                                            </button>
                                         )}
 
                                         {project.status === 'publishing' && (
                                             <div className="flex-1 max-w-xl bg-slate-800/40 border border-red-500/20 rounded-2xl p-6 relative overflow-hidden group">
-                                                <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-red-600 to-red-500 transition-all duration-700 shadow-[0_0_10px_rgba(239,68,68,0.5)]" style={{ width: `${project.publishProgress || 0}%` }}></div>
+                                                <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-red-600 to-red-500 transition-all duration-700 shadow-[0_0_10px_rgba(239,68,68,0.5)]" style={{ width: `${publishDisplayProgress}%` }}></div>
                                                 <div className="flex items-center justify-between mb-3">
                                                     <div className="flex items-center gap-3">
                                                         <div className="relative">
                                                             <div className="w-5 h-5 border-2 border-red-500/20 border-t-red-500 rounded-full animate-spin"></div>
                                                             <div className="absolute inset-0 bg-red-500/10 rounded-full blur-sm animate-pulse"></div>
                                                         </div>
-                                                        <span className="text-sm font-black text-white uppercase tracking-widest">{project.publishProgress === 100 ? 'Finalizing...' : 'Publishing to YouTube...'}</span>
+                                                        <span className="text-sm font-black text-white uppercase tracking-widest">{publishDisplayProgress === 100 ? 'Finalizing...' : 'Publishing to YouTube...'}</span>
                                                     </div>
                                                     <div className="px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded-md">
-                                                        <span className="text-xs font-mono font-bold text-red-400">{project.publishProgress || 0}%</span>
+                                                        <span className="text-xs font-mono font-bold text-red-400">{publishDisplayProgress}%</span>
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -2045,11 +2185,11 @@ export default function ProjectDetailPage() {
                                             </div>
                                         )}
 
-                                        {(project.status === 'assembling' || project.status === 'review' || project.status === 'published' || project.status === 'ready') && currentUser?.settings.youtubeConnected && (
+                                        {(project.status === 'assembling' || project.status === 'review' || project.status === 'published' || project.status === 'ready' || project.status === 'publishing') && currentUser?.settings.youtubeConnected && (
                                             <button
                                                 onClick={handleOpenPublishModal}
                                                 disabled={isGeneratingMetadata}
-                                                className={`px-8 py-4 rounded-2xl font-bold transition-all disabled:opacity-50 flex items-center gap-3 ${project.status === 'published'
+                                                className={`px-8 py-4 rounded-2xl font-bold transition-all disabled:opacity-50 flex items-center gap-3 ${project.status === 'published' || project.status === 'publishing'
                                                     ? 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-700'
                                                     : 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white shadow-lg shadow-red-500/20'
                                                     }`}
@@ -2060,7 +2200,13 @@ export default function ProjectDetailPage() {
                                                         <span>Consulting Gemini...</span>
                                                     </>
                                                 ) : (
-                                                    <span>{project.status === 'published' ? '🔄 Republish to YouTube' : '🚀 Review & Publish to YouTube'}</span>
+                                                    <span>
+                                                        {project.status === 'publishing'
+                                                            ? '📡 View Upload Progress'
+                                                            : project.status === 'published'
+                                                                ? '🔄 Republish to YouTube'
+                                                                : '🚀 Review & Publish to YouTube'}
+                                                    </span>
                                                 )}
                                             </button>
                                         )}
@@ -2252,14 +2398,16 @@ export default function ProjectDetailPage() {
                     onClose={() => setIsPublishModalOpen(false)}
                     initialMetadata={publishMetadata}
                     onConfirm={handleConfirmPublish}
+                    onCancel={handleCancelPublish}
                     onOptimize={handleOptimizeViral}
                     isOptimizing={isOptimizing}
                     thumbnailUrl={project.thumbnailUrl}
                     isPublishing={isPublishing || project.status === 'publishing'}
-                    publishProgress={project.publishProgress}
+                    publishProgress={publishDisplayProgress}
                     publishMessage={project.publishMessage}
                     status={project.status}
                     youtubeUrl={project.youtubeUrl}
+                    videoUrl={project.downloadUrl}
                 />
 
                 {publishedUrl && (
@@ -2269,7 +2417,7 @@ export default function ProjectDetailPage() {
                                 <span className="text-2xl">🎉</span>
                                 <div>
                                     <h3 className="font-bold text-white">Published to YouTube!</h3>
-                                    <p className="text-xs text-slate-400">Your documentary is now live (unlisted).</p>
+                                    <p className="text-xs text-slate-400">Your documentary has been successfully uploaded.</p>
                                 </div>
                             </div>
                             <div className="flex gap-2">

@@ -124,6 +124,7 @@ export interface Project {
     visualStyle?: VisualStyle;
     visualSnapshots?: VisualSnapshot[];
     shorts?: ViralClip[];
+    _cancelUpload?: boolean; // Internal flag to signal upload cancellation
     createdAt: Date;
     updatedAt: Date;
 }

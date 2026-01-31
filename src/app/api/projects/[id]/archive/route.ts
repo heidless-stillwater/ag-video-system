@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProject } from '@/lib/services/firestore-admin';
-import path from 'path';
-import fs from 'fs';
+import { storageService } from '@/lib/services/storage';
 
 /**
- * API Route to archive a rendered video file.
- * This clones the current project.mp4 to a unique archived name to prevent overwriting.
+ * API Route to archive a rendered video file using Firebase Storage.
  */
 export async function POST(
     req: NextRequest,
@@ -16,35 +13,19 @@ export async function POST(
     try {
         const { label } = await req.json();
 
-        const timestamp = new Date().getTime();
-        const safeLabel = (label || 'snapshot').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        const archiveFilename = `${projectId}_${safeLabel}_${timestamp}.mp4`;
-
-        const sourcePath = path.join(process.cwd(), 'public', 'renders', `${projectId}.mp4`);
-        const archiveDir = path.join(process.cwd(), 'public', 'renders', 'archives');
-        const archivePath = path.join(archiveDir, archiveFilename);
-
-        if (!fs.existsSync(sourcePath)) {
-            return NextResponse.json({ error: 'Source video not found' }, { status: 404 });
-        }
-
-        if (!fs.existsSync(archiveDir)) {
-            fs.mkdirSync(archiveDir, { recursive: true });
-        }
-
-        // Clone the file
-        fs.copyFileSync(sourcePath, archivePath);
-
-        const archiveUrl = `/renders/archives/${archiveFilename}`;
+        console.log(`[Archive API] Archiving project: ${projectId} with label: ${label}`);
+        const result = await storageService.archiveVideo(projectId, label || 'snapshot');
+        const proxyUrl = `/api/projects/${projectId}/video?archiveId=${result.archiveId}`;
 
         return NextResponse.json({
             success: true,
-            archiveUrl,
-            archiveId: `${safeLabel}_${timestamp}`
+            archiveUrl: proxyUrl,
+            archiveId: result.archiveId
         });
 
     } catch (error: any) {
         console.error('[Archive API] Fatal error:', error);
-        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+        const status = error.message.includes('not found') ? 404 : 500;
+        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status });
     }
 }

@@ -9,6 +9,7 @@ import { Scene } from './video-engine';
 import { analyticsServerService } from './analytics-server';
 import { EnvironmentMode } from '../config/environment';
 import { resourceGovernor } from './resource-governor';
+import { storageService } from './storage';
 
 // Configure ffmpeg to use the static binary
 const getFFmpegPath = () => {
@@ -92,8 +93,9 @@ export const renderEngine = {
         console.log(`[FFmpegRenderEngine] Starting ${isVertical ? 'Vertical (9:16)' : '4K Horizontal (16:9)'} render for: ${projectId}`);
 
         const startTime = Date.now();
-        const tempDir = path.join(process.cwd(), 'tmp', `render-${projectId}`);
-        const outputDir = path.join(process.cwd(), 'public', 'renders');
+        const baseTemp = os.tmpdir();
+        const tempDir = path.join(baseTemp, `render-${projectId}-${Date.now()}`);
+        const outputDir = path.join(baseTemp, 'renders');
         const fileName = customFileName || `${projectId}.mp4`;
         const outputFile = path.join(outputDir, fileName);
 
@@ -101,7 +103,7 @@ export const renderEngine = {
         if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
         try {
-            console.log(`[FFmpegRenderEngine] Debug: Entered try block. Scenes: ${scenes.length}`);
+            console.log(`[FFmpegRenderEngine] Debug: Entered try block. TempDir: ${tempDir}`);
             // 1. Download all assets locally
             if (onProgress) await onProgress(0, `Downloading ${scenes.length} assets...`);
             console.log(`[FFmpegRenderEngine] Downloading assets for ${scenes.length} scenes...`);
@@ -127,7 +129,12 @@ export const renderEngine = {
             console.log(`[FFmpegRenderEngine] Running single-pass complex render...`);
             await this.generateCineVideo(scenes, assetPaths, outputFile, tempDir, onProgress, backgroundMusicVolume, ambianceVolume, narrationVolume, globalSfxVolume, subtitlesEnabled, subtitleStyle, aspectRatio);
 
-            console.log(`[FFmpegRenderEngine] SUCCESS: ${outputFile}`);
+            // 4. Upload to Firebase Storage
+            if (onProgress) await onProgress(98, 'Moving video to permanent storage...');
+            console.log(`[FFmpegRenderEngine] Uploading final video to storage...`);
+            const finalUrl = await storageService.uploadVideo(projectId, outputFile, customFileName);
+
+            console.log(`[FFmpegRenderEngine] SUCCESS: ${finalUrl}`);
 
             // 8. Log Analytics
             const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
@@ -140,7 +147,7 @@ export const renderEngine = {
                 projectId: projectId
             }, 'PRODUCTION'); // Rendering is always considered a heavy/production-level task
 
-            return outputFile;
+            return finalUrl;
         } catch (error: any) {
             console.error('[FFmpegRenderEngine] FATAL ERROR:', error);
             throw new Error(`FFmpeg Rendering failed: ${error.message}`);
@@ -206,31 +213,39 @@ export const renderEngine = {
         const assPath = path.join(tempDir, 'subtitles.ass');
         const isVertical = aspectRatio === '9:16';
 
-        // Base values for 16:9 (4K)
+        // Proportional synchronization with VideoPreview.tsx (CSS cqw units)
+        // Proportional synchronization with VideoPreview.tsx (CSS cqw units)
+        // 4.5% of width + half-leading offset
         let playResX = 3840;
         let playResY = 2160;
-        let fontSize = 128;
+        let fontSize = 92; // 2.4% of width (minimal)
         let alignment = 2; // Bottom Center
-        let marginV = 200;
+        let marginV = 202; // Mathematically: (4.5% of width) + (leading-relaxed offset)
+        let marginLR = 480; // (100% - 75%) / 2 = 12.5% of width
         let bold = 0;
         let primaryColour = '&H33FFFFFF'; // 80% opacity white
+        let spacing = 3.5; // ~0.05em tracking for 'minimal'
 
         // Adjust for Vertical (9:16)
         if (isVertical) {
             playResX = 1080;
             playResY = 1920;
-            fontSize = 72; // Larger relative to width
-            alignment = 5; // Middle Center for high impact Shorts
-            marginV = 0;
+            fontSize = 32; // ~3% for readability
+            alignment = 2;
+            marginV = 59; // 4.5% of 1080 + offset
+            marginLR = 135;
+            spacing = 1.2;
         }
 
         if (styleType === 'bold') {
-            fontSize = isVertical ? 86 : 144;
-            bold = -1; // ASS bold is -1
-            primaryColour = '&H00FFFFFF'; // 100% white
-        } else if (styleType === 'classic') {
-            fontSize = isVertical ? 64 : 116;
+            fontSize = isVertical ? 48 : 123; // 3.2% of width
+            bold = -1;
             primaryColour = '&H00FFFFFF';
+            spacing = -1.5; // tight tracking for high impact
+        } else if (styleType === 'classic') {
+            fontSize = isVertical ? 38 : 108; // 2.8% of width
+            primaryColour = '&H00FFFFFF';
+            spacing = 0;
         }
 
         const header = [
@@ -245,7 +260,7 @@ export const renderEngine = {
             '',
             '[V4+ Styles]',
             'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-            `Style: Default,Arial,${fontSize},${primaryColour},&H000000FF,&H00000000,&H80000000,${bold},0,0,0,100,100,2,0,1,0,2,${alignment},300,300,${marginV},1`,
+            `Style: Default,Arial,${fontSize},${primaryColour},&H000000FF,&H00000000,&H80000000,${bold},0,0,0,100,100,${spacing},0,1,0.5,2,${alignment},${marginLR},${marginLR},${marginV},1`,
             '',
             '[Events]',
             'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
@@ -264,8 +279,14 @@ export const renderEngine = {
             .map(scene => {
                 const start = formatAssTime(scene.startTime);
                 const end = formatAssTime(scene.startTime + scene.duration);
-                // Escape simple braces and replace newlines with \N
-                const text = scene.narrationText!.replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\n/g, '\\N');
+                // CRITICAL: Browser standard collapses newlines into spaces unless white-space: pre is set.
+                // We collapse everything to single spaces to ensure the layout matches the preview exemplar 1:1.
+                const text = scene.narrationText!
+                    .replace(/[\r\n]+/g, ' ')
+                    .replace(/\s\s+/g, ' ')
+                    .replace(/\{/g, '\\{')
+                    .replace(/\}/g, '\\}')
+                    .trim();
                 return `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}`;
             })
             .join('\n');
@@ -312,7 +333,6 @@ export const renderEngine = {
         const isVertical = aspectRatio === '9:16';
         return new Promise<void>((resolve, reject) => {
             ffmpeg(src)
-                .renice(10)
                 .outputOptions([
                     '-vf', isVertical
                         ? 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1'
@@ -327,7 +347,6 @@ export const renderEngine = {
     async createSteadySegment(imgPath: string, duration: number, outPath: string) {
         return new Promise<void>((resolve, reject) => {
             ffmpeg(imgPath)
-                .renice(10)
                 .loop(duration)
                 .outputOptions([
                     '-t', duration.toString(),
@@ -351,7 +370,6 @@ export const renderEngine = {
             const fType = transitionMap[type] || 'fade';
 
             ffmpeg()
-                .renice(10)
                 .input(imgAPath).inputOptions(['-loop 1', `-t ${duration}`])
                 .input(imgBPath).inputOptions(['-loop 1', `-t ${duration}`])
                 .complexFilter([
@@ -370,11 +388,10 @@ export const renderEngine = {
     async concatenateSegments(segmentPaths: string[], outPath: string, tempDir: string) {
         return new Promise<void>((resolve, reject) => {
             const listPath = path.join(tempDir, 'concat.txt');
-            const listContent = segmentPaths.map(p => `file '${path.resolve(p)}'`).join('\n');
+            const listContent = segmentPaths.map(p => `file '${path.resolve(p).replace(/'/g, "'\\''")}'`).join('\n');
             fs.writeFileSync(listPath, listContent);
 
             ffmpeg()
-                .renice(10)
                 .input(listPath)
                 .inputOptions(['-f concat', '-safe 0'])
                 .outputOptions(['-c copy']) // Lossless
@@ -483,7 +500,6 @@ export const renderEngine = {
     ) {
         return new Promise<void>((resolve, reject) => {
             const command = ffmpeg(videoPath);
-            command.renice(10);
             let inputCounter = 1;
 
             // 1. Add narration inputs

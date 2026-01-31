@@ -22,7 +22,7 @@ function NewProjectContent() {
     const [isLoading, setIsLoading] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [visualStyle, setVisualStyle] = useState<VisualStyle>('cinematic');
+    const [visualStyle, setVisualStyle] = useState<VisualStyle>('studio-ghibli');
 
     useEffect(() => {
         async function loadTopic() {
@@ -88,6 +88,11 @@ function NewProjectContent() {
                 estimatedDuration: 120, // Default 2 hours
                 estimatedCost: 0,
                 visualStyle: visualStyle,
+                backgroundMusicUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // Space Drift
+                backgroundMusicVolume: 0.2,
+                ambianceVolume: 0.1,
+                narrationVolume: 1.0,
+                globalSfxVolume: 0.4,
             };
 
             if (isMockUser) {

@@ -13,6 +13,7 @@ interface PublishModalProps {
     isOpen: boolean;
     onClose: () => void;
     onConfirm: (metadata: PublishMetadata, privacy: 'public' | 'unlisted' | 'private') => Promise<void>;
+    onCancel: () => Promise<void>;
     onOptimize: () => Promise<void>;
     isOptimizing: boolean;
     initialMetadata: PublishMetadata | null;
@@ -22,12 +23,14 @@ interface PublishModalProps {
     publishMessage?: string;
     status: string;
     youtubeUrl?: string;
+    videoUrl?: string;
 }
 
 export const PublishModal: React.FC<PublishModalProps> = ({
     isOpen,
     onClose,
     onConfirm,
+    onCancel,
     onOptimize,
     isOptimizing,
     initialMetadata,
@@ -36,14 +39,60 @@ export const PublishModal: React.FC<PublishModalProps> = ({
     publishProgress,
     publishMessage,
     status,
-    youtubeUrl
+    youtubeUrl,
+    videoUrl
 }) => {
     const [metadata, setMetadata] = React.useState<PublishMetadata>(initialMetadata || {
         title: '',
         description: '',
         tags: []
     });
-    const [privacy, setPrivacy] = React.useState<'public' | 'unlisted' | 'private'>('unlisted');
+    const [privacy, setPrivacy] = React.useState<'public' | 'unlisted' | 'private'>('private');
+
+    // Debug: Log all props when modal opens
+    React.useEffect(() => {
+        if (isOpen) {
+            console.log('[PublishModal] Modal opened with props:', {
+                videoUrl,
+                thumbnailUrl,
+                status,
+                youtubeUrl,
+                initialMetadata,
+                isPublishing,
+                publishProgress,
+                publishMessage
+            });
+        }
+    }, [isOpen, videoUrl, thumbnailUrl, status, youtubeUrl, initialMetadata, isPublishing, publishProgress, publishMessage]);
+
+    // Ensure progress only increases (monotonic)
+    const [displayProgress, setDisplayProgress] = React.useState(0);
+    React.useEffect(() => {
+        if (publishProgress !== undefined && publishProgress > displayProgress) {
+            setDisplayProgress(publishProgress);
+        }
+        // Reset when starting fresh or finished
+        if (!isPublishing && status !== 'publishing' && status !== 'published') {
+            setDisplayProgress(0);
+        }
+    }, [publishProgress, isPublishing, status, displayProgress]);
+
+    // Convert relative proxy URL to absolute URL for video element
+    const absoluteVideoUrl = React.useMemo(() => {
+        console.log('[PublishModal] Computing absoluteVideoUrl from:', videoUrl);
+        if (!videoUrl) {
+            console.log('[PublishModal] No videoUrl provided');
+            return undefined;
+        }
+        if (videoUrl.startsWith('http')) {
+            console.log('[PublishModal] Using absolute URL as-is:', videoUrl);
+            return videoUrl;
+        }
+        // Convert relative proxy URL to absolute
+        const absolute = `${window.location.origin}${videoUrl}`;
+        console.log('[PublishModal] Converted to absolute URL:', absolute);
+        return absolute;
+    }, [videoUrl]);
 
     // Sync metadata when initialMetadata changes (after optimization)
     React.useEffect(() => {
@@ -111,6 +160,26 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                     </div>
                 ) : (
                     <div className="space-y-6 overflow-y-auto pr-2 flex-grow custom-scrollbar">
+                        {/* Video Review Section */}
+                        {absoluteVideoUrl && (
+                            <div className="space-y-3">
+                                <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-widest">Review Final Movie</label>
+                                <div className="aspect-video bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-2xl relative group">
+                                    <video
+                                        src={absoluteVideoUrl}
+                                        controls
+                                        className="w-full h-full object-contain"
+                                        poster={thumbnailUrl}
+                                    />
+                                    <div className="absolute top-4 left-4 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <span className="px-3 py-1.5 bg-red-600/90 text-white text-[10px] font-black uppercase tracking-widest rounded-lg backdrop-blur-sm">
+                                            Master Preview
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Left Column: Viral Preview */}
                             <div className="space-y-6">
@@ -137,7 +206,8 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                                         type="text"
                                         value={metadata.title}
                                         onChange={(e) => setMetadata({ ...metadata, title: e.target.value })}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-red-500/50 transition-colors"
+                                        disabled={isPublishing}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-red-500/50 transition-colors disabled:opacity-50"
                                         placeholder="Pick a catchy title..."
                                     />
                                 </div>
@@ -164,7 +234,8 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                                         value={metadata.description}
                                         onChange={(e) => setMetadata({ ...metadata, description: e.target.value })}
                                         rows={10}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-[20px] px-4 py-3 text-xs text-slate-300 focus:outline-none focus:border-red-500/50 transition-colors resize-none custom-scrollbar"
+                                        disabled={isPublishing}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-[20px] px-4 py-3 text-xs text-slate-300 focus:outline-none focus:border-red-500/50 transition-colors resize-none custom-scrollbar disabled:opacity-50"
                                         placeholder="Gemini will craft a narrative description here..."
                                     />
                                 </div>
@@ -174,7 +245,8 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                                     <select
                                         value={privacy}
                                         onChange={(e) => setPrivacy(e.target.value as any)}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-red-500/50 transition-colors appearance-none"
+                                        disabled={isPublishing}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-red-500/50 transition-colors appearance-none disabled:opacity-50"
                                     >
                                         <option value="private">Private</option>
                                         <option value="unlisted">Unlisted</option>
@@ -186,13 +258,26 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                     </div>
                 )}
 
+
                 <div className="flex gap-4 mt-8 flex-shrink-0">
-                    <button
-                        onClick={onClose}
-                        className="flex-1 px-6 py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-bold transition-all border border-slate-700"
-                    >
-                        {status === 'published' ? 'Close' : 'Cancel'}
-                    </button>
+                    {!isPublishing ? (
+                        <button
+                            onClick={onClose}
+                            className="flex-1 px-6 py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-bold transition-all border border-slate-700"
+                        >
+                            {status === 'published' ? 'Close' : 'Cancel'}
+                        </button>
+                    ) : (
+                        <button
+                            onClick={onCancel}
+                            className="flex-1 px-6 py-4 bg-orange-600 hover:bg-orange-500 text-white rounded-2xl font-bold transition-all border border-orange-500 flex items-center justify-center gap-2"
+                        >
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            <span>Cancel Upload</span>
+                        </button>
+                    )}
                     {status !== 'published' && (
                         <button
                             onClick={() => onConfirm(metadata, privacy)}
@@ -208,7 +293,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                                     <div className="w-full h-1 bg-white/10 rounded-full mt-2 overflow-hidden">
                                         <div
                                             className="h-full bg-red-500 transition-all duration-500"
-                                            style={{ width: `${publishProgress || 0}%` }}
+                                            style={{ width: `${displayProgress}%` }}
                                         ></div>
                                     </div>
                                 </div>

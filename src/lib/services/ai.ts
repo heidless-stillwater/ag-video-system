@@ -4,6 +4,7 @@ import { getConfig, getEnvironmentMode, EnvironmentMode } from '../config/enviro
 import { analyticsServerService } from './analytics-server';
 import path from 'path';
 import axios from 'axios';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { Script, ScriptSection, VisualStyle, ViralCandidate } from '@/types';
 import { videoEngine } from './video-engine';
@@ -14,20 +15,18 @@ let vertexAI: VertexAI | null = null;
 function getVertexAI(envMode?: 'DEV' | 'STAGING' | 'PRODUCTION'): VertexAI {
     if (vertexAI) return vertexAI;
 
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || 'heidless-firebase-2';
 
-    if (!projectId) {
-        throw new Error('GOOGLE_CLOUD_PROJECT_ID is not set');
-    }
-
-    const path = require('path');
-    const keyFile = path.resolve(process.cwd(), 'service-account.json');
+    const saPath = path.resolve(process.cwd(), 'service-account.json');
+    const hasKeyFile = fs.existsSync(saPath);
 
     vertexAI = new VertexAI({
         project: projectId,
         location: 'us-central1',
-        googleAuthOptions: {
-            keyFile: keyFile,
+        googleAuthOptions: hasKeyFile ? {
+            keyFile: saPath,
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        } : {
             scopes: ['https://www.googleapis.com/auth/cloud-platform']
         }
     });
@@ -37,9 +36,11 @@ function getVertexAI(envMode?: 'DEV' | 'STAGING' | 'PRODUCTION'): VertexAI {
 
 // Helper to get an access token for direct REST calls (required for specialized models like Imagen 3)
 async function getAccessToken(): Promise<string | null | undefined> {
-    const keyFile = path.resolve(process.cwd(), 'service-account.json');
+    const saPath = path.resolve(process.cwd(), 'service-account.json');
+    const hasKeyFile = fs.existsSync(saPath);
+
     const auth = new GoogleAuth({
-        keyFile,
+        keyFile: hasKeyFile ? saPath : undefined,
         scopes: ['https://www.googleapis.com/auth/cloud-platform']
     });
     const client = await auth.getClient();

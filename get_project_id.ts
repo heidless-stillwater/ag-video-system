@@ -1,0 +1,1 @@
+const { db } = require('./src/lib/firebase-admin'); async function main() { const snapshot = await db.collection('projects').limit(1).get(); if (!snapshot.empty) { console.log(snapshot.docs[0].id); } else { console.log('NO_PROJECTS'); } } main();

@@ -6,8 +6,8 @@ import { Project, Script, ScriptSection } from '@/types';
 interface MasteringBoothProps {
     project: Project;
     script: Script;
-    onRegenerateLine: (sectionId: string) => Promise<void>;
-    onRegenerateAll: () => Promise<void>;
+    onRegenerateLine: (sectionId: string, voiceProfile?: Project['voiceProfile']) => Promise<void>;
+    onRegenerateAll: (voiceProfile?: Project['voiceProfile']) => Promise<void>;
     onUpdateVoiceProfile: (profile: Project['voiceProfile']) => Promise<void>;
     isGenerating: boolean;
     generatingId?: string | null;
@@ -26,6 +26,8 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
     const [auditioningProfile, setAuditioningProfile] = useState<string | null>(null);
     const [isPaused, setIsPaused] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [selectedVoices, setSelectedVoices] = useState<Record<string, Project['voiceProfile']>>({});
+    const [globalSelectedVoice, setGlobalSelectedVoice] = useState<Project['voiceProfile']>(project.voiceProfile || 'standard');
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
     // Clean up audio on unmount
@@ -75,12 +77,12 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
 
     const handleRegenerateLine = (sectionId: string) => {
         handleStop();
-        onRegenerateLine(sectionId);
+        onRegenerateLine(sectionId, selectedVoices[sectionId] || project.voiceProfile || 'standard');
     };
 
     const handleRegenerateAll = () => {
         handleStop();
-        onRegenerateAll();
+        onRegenerateAll(globalSelectedVoice);
     };
 
     const handleStop = () => {
@@ -214,17 +216,28 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
             <div className="space-y-4">
                 <div className="flex items-center justify-between px-2">
                     <h4 className="text-sm font-black text-slate-500 uppercase tracking-[0.2em]">Voiceover Mastering Track</h4>
-                    <button
-                        onClick={handleRegenerateAll}
-                        disabled={isGenerating}
-                        className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-purple-500/20"
-                    >
-                        {isGenerating && !generatingId ? (
-                            <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
-                        ) : (
-                            <span>🎙️ Re-render All Audio</span>
-                        )}
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <select
+                            value={globalSelectedVoice}
+                            onChange={(e) => setGlobalSelectedVoice(e.target.value as any)}
+                            className="bg-slate-800 border-white/5 text-[10px] font-bold text-white rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-purple-500 transition-all cursor-pointer"
+                        >
+                            {VOICE_PROFILES.map(p => (
+                                <option key={p.id} value={p.id}>{p.label} Voice</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={handleRegenerateAll}
+                            disabled={isGenerating}
+                            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-purple-500/20"
+                        >
+                            {isGenerating && !generatingId ? (
+                                <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                            ) : (
+                                <span>🎙️ Re-render All Audio</span>
+                            )}
+                        </button>
+                    </div>
                 </div>
 
                 <div className="grid gap-4">
@@ -235,7 +248,7 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
                         >
                             <div className="flex flex-col lg:flex-row gap-6">
                                 {/* Left: Info & Controls */}
-                                <div className="lg:w-64 shrink-0 space-y-4">
+                                <div className="lg:w-72 shrink-0 space-y-4">
                                     <div className="flex items-center justify-between">
                                         <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest bg-purple-400/10 px-2 py-0.5 rounded">
                                             Line {idx + 1}
@@ -249,12 +262,26 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
                                         </div>
                                     </div>
 
-                                    <div className="space-y-2">
-                                        <div className="grid grid-cols-4 gap-1">
+                                    <div className="space-y-3">
+                                        {/* Voice Selection for this line */}
+                                        <div className="relative">
+                                            <select
+                                                value={selectedVoices[section.id] || project.voiceProfile || 'standard'}
+                                                onChange={(e) => setSelectedVoices(prev => ({ ...prev, [section.id]: e.target.value as any }))}
+                                                className="w-full bg-slate-800/80 border border-white/5 text-[10px] font-bold text-white rounded-xl px-3 py-2 outline-none focus:ring-1 focus:ring-purple-500 transition-all cursor-pointer appearance-none"
+                                            >
+                                                {VOICE_PROFILES.map(p => (
+                                                    <option key={p.id} value={p.id}>{p.label} Voice</option>
+                                                ))}
+                                            </select>
+                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 text-[8px]">▼</div>
+                                        </div>
+
+                                        <div className="grid grid-cols-4 gap-2">
                                             <button
                                                 onClick={handleRewind}
                                                 disabled={playingId !== section.id}
-                                                className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-20 rounded-lg text-xs transition-all flex items-center justify-center border border-white/5"
+                                                className="p-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-20 rounded-xl text-xs transition-all flex items-center justify-center border border-white/5"
                                                 title="Rewind"
                                             >
                                                 ⏪
@@ -262,7 +289,7 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
                                             <button
                                                 onClick={() => section.audioUrl && handlePlayPause(section.id, `${section.audioUrl}${section.audioUrl.includes('?') ? '&' : '?'}t=${Date.now()}`)}
                                                 disabled={!section.audioUrl}
-                                                className={`col-span-1 p-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center border border-white/5 ${playingId === section.id && !isPaused ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'bg-slate-800 text-white hover:bg-slate-700'
+                                                className={`col-span-1 p-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center border border-white/5 ${playingId === section.id && !isPaused ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20 text-sm' : 'bg-slate-800 text-white hover:bg-slate-700'
                                                     }`}
                                             >
                                                 {playingId === section.id && !isPaused ? '⏸️' : '▶️'}
@@ -270,7 +297,7 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
                                             <button
                                                 onClick={handleStop}
                                                 disabled={playingId !== section.id}
-                                                className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-20 rounded-lg text-xs transition-all flex items-center justify-center border border-white/5"
+                                                className="p-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-20 rounded-xl text-xs transition-all flex items-center justify-center border border-white/5"
                                                 title="Stop"
                                             >
                                                 ⏹️
@@ -278,7 +305,8 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
                                             <button
                                                 onClick={() => handleRegenerateLine(section.id)}
                                                 disabled={isGenerating}
-                                                className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 rounded-lg text-xs transition-all flex items-center justify-center border border-white/5"
+                                                className={`p-2.5 rounded-xl text-xs transition-all flex items-center justify-center border border-white/5 ${generatingId === section.id ? 'bg-purple-600/50' : 'bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-500/20'
+                                                    }`}
                                                 title="Regenerate"
                                             >
                                                 {generatingId === section.id ? (
@@ -288,44 +316,62 @@ export const MasteringBooth: React.FC<MasteringBoothProps> = ({
                                                 )}
                                             </button>
                                         </div>
-
-                                        {/* Progress Bar */}
-                                        {playingId === section.id && (
-                                            <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full bg-purple-500 transition-all duration-100 ease-linear"
-                                                    style={{ width: `${progress}%` }}
-                                                />
-                                            </div>
-                                        )}
                                     </div>
 
-                                    <div className="text-[9px] text-slate-500 font-mono text-center uppercase tracking-widest">
-                                        {section.wordCount} Words • {section.estimatedDuration}s
-                                    </div>
-                                </div>
-
-                                {/* Right: Content Preview */}
-                                <div className="flex-1 relative">
-                                    <p className="text-sm text-slate-400 leading-relaxed italic line-clamp-3 group-hover/line:line-clamp-none transition-all">
-                                        "{section.content}"
-                                    </p>
-
-                                    {/* Visual Cue Indicator */}
-                                    {section.visualCues && section.visualCues.length > 0 && (
-                                        <div className="flex gap-2 mt-4">
-                                            {section.visualCues.map((cue, cIdx) => (
-                                                <div
-                                                    key={cue.id}
-                                                    className="w-8 h-8 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-[10px] grayscale opacity-50 group-hover/line:grayscale-0 group-hover/line:opacity-100 transition-all"
-                                                    title={cue.description}
-                                                >
-                                                    🖼️
-                                                </div>
-                                            ))}
+                                    {/* Progress Bar */}
+                                    {playingId === section.id && (
+                                        <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full bg-purple-500 transition-all duration-100 ease-linear"
+                                                style={{ width: `${progress}%` }}
+                                            />
                                         </div>
                                     )}
                                 </div>
+
+                                <div className="text-[9px] text-slate-500 font-mono text-center uppercase tracking-widest">
+                                    {section.wordCount} Words • {section.estimatedDuration}s
+                                </div>
+                            </div>
+
+                            {/* Right: Content Preview */}
+                            <div className="flex-1 relative">
+                                <p className="text-sm text-slate-400 leading-relaxed italic line-clamp-3 group-hover/line:line-clamp-none transition-all">
+                                    "{section.content}"
+                                </p>
+
+                                {/* Visual Cue Indicator */}
+                                {section.visualCues && section.visualCues.length > 0 && (
+                                    <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
+                                        {section.visualCues.map((cue, cIdx) => (
+                                            <div
+                                                key={cue.id}
+                                                className="relative group/cue shrink-0"
+                                            >
+                                                {cue.url ? (
+                                                    <div className="w-24 aspect-video rounded-lg overflow-hidden border border-white/10 relative">
+                                                        <img
+                                                            src={cue.url}
+                                                            alt={cue.description}
+                                                            className="w-full h-full object-cover transition-transform duration-500 group-hover/cue:scale-110"
+                                                        />
+                                                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/cue:opacity-100 transition-opacity flex items-center justify-center">
+                                                            <span className="text-[8px] font-bold text-white uppercase tracking-wider">Cue {cIdx + 1}</span>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div
+                                                        className="w-24 aspect-video rounded-lg bg-teal-500/10 border border-teal-500/20 flex flex-col items-center justify-center text-[10px] grayscale opacity-50 group-hover/line:grayscale-0 group-hover/line:opacity-100 transition-all gap-1"
+                                                        title={cue.description}
+                                                    >
+                                                        <span>🖼️</span>
+                                                        <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Pending</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}

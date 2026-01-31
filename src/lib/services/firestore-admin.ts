@@ -45,7 +45,7 @@ export async function getUserProjects(userId: string): Promise<Project[]> {
         .orderBy('updatedAt', 'desc')
         .get();
 
-    return snapshot.docs.map(doc => {
+    return snapshot.docs.map((doc: any) => {
         const data = doc.data();
         return {
             id: doc.id,
