@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateSpeech } from '@/lib/services/tts';
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 export async function POST(req: NextRequest) {
     try {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
         const sampleText = getSampleText(voiceProfile);
 
         const cookieStore = await cookies();
-        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         const audioBuffer = await generateSpeech(
             sampleText,

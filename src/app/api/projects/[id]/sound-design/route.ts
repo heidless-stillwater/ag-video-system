@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getProject, getScript, updateProject, updateScript } from '@/lib/services/firestore-admin';
 import { soundDesigner } from '@/lib/services/sound-designer';
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 export async function POST(
     req: NextRequest,
@@ -19,7 +19,7 @@ export async function POST(
         if (!script) return NextResponse.json({ error: 'Script not found' }, { status: 404 });
 
         const cookieStore = await cookies();
-        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         console.log(`[Sound Design API] Generating for project: ${projectId}`);
         const design = await soundDesigner.generateSoundDesign(script, envMode);

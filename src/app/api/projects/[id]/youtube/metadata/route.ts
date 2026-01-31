@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getScript } from '@/lib/services/firestore-admin';
 import { youtubeService } from '@/lib/services/youtube';
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 /**
  * API Route to generate YouTube metadata for a project.
@@ -26,7 +26,7 @@ export async function GET(
         }
 
         const cookieStore = await cookies();
-        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         const metadata = await youtubeService.generateMetadata(script, envMode);
 

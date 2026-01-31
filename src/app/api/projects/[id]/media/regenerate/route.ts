@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getConfig, EnvironmentMode } from '@/lib/config/environment';
+import { getConfig, EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 import { generateImage } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
 import { getScript, updateScript, getProject } from '@/lib/services/firestore-admin';
@@ -29,7 +29,7 @@ export async function POST(
 
         // 2. Identify Environment Mode
         const cookieStore = await cookies();
-        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         // 2b. Get Project for Visual Style
         const project = await getProject(projectId);

@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { Header } from "@/components/layout/Header";
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from "@/lib/config/environment";
+import { EnvironmentMode, getEnvironmentMode } from "@/lib/config/environment";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -24,15 +24,16 @@ export default async function RootLayout({
 }>) {
   // Read environment mode from cookie server-side
   const cookieStore = await cookies();
-  const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) ||
-    (process.env.NEXT_PUBLIC_ENV_MODE as EnvironmentMode) ||
-    'DEV';
+  const envModeFromCookie = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+
+  // Use cookie if present, otherwise fallback to system default (which is now smarter)
+  const effectiveMode = envModeFromCookie || getEnvironmentMode();
 
   return (
     <html lang="en" className="dark">
       <body className={`${inter.variable} font-sans antialiased text-gray-200`}>
         <Providers>
-          <Header initialMode={envMode} />
+          <Header initialMode={effectiveMode} />
           <main className="pt-16 min-h-screen">
             {children}
           </main>

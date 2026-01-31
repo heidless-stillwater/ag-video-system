@@ -4,7 +4,7 @@ import { getProject, getScript, updateProject } from '@/lib/services/firestore-a
 import { resourceGovernor } from '@/lib/services/resource-governor';
 import { generateThumbnailPrompt, generateImage, generateSEOMetadata } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 /**
  * API Route to generate "Viral Suite" assets (Thumbnail + SEO Metadata).
@@ -41,7 +41,7 @@ export async function POST(
         }
 
         const cookieStore = await cookies();
-        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || 'DEV';
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         console.log(`[Viral Suite API] Starting generation for project: ${projectId} in mode: ${envMode}`);
 

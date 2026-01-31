@@ -4,7 +4,7 @@ import { extractFacts } from '@/lib/services/ai';
 import { getProject, getTopic } from '@/lib/services/firestore-admin';
 import { Fact, ResearchSource } from '@/types';
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 /**
  * API Route for orchestrating the research phase.
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
             const combinedContent = sources.slice(0, 2).map(s => s.extractedContent).join('\n\n');
 
             const cookieStore = await cookies();
-            const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+            const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
             console.log(`[Research API] Environment Mode detected: ${envMode || 'DEFAULT'}`);
 
             const rawFacts = await extractFacts(combinedContent, envMode);

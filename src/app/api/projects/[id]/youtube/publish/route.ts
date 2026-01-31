@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { storageService } from '@/lib/services/storage';
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 /**
  * API Route to publish a video to YouTube.
@@ -26,7 +26,7 @@ export async function POST(
 
         // Read environment mode from cookie
         const cookieStore = await cookies();
-        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         // 1. Get User Tokens and Project from Firestore
         const user = await getUser(uid);

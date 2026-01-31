@@ -4,7 +4,7 @@ import { getProject, getScript, saveScript, updateProject, updateScript } from '
 import { translateScript } from '@/lib/services/ai';
 import { generateSpeech } from '@/lib/services/tts';
 import { storageService } from '@/lib/services/storage';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 import { resourceGovernor } from '@/lib/services/resource-governor';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -39,7 +39,7 @@ export async function POST(
         }
 
         const cookieStore = await cookies();
-        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || 'DEV';
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
 
         // 1. Fetch Project and Original Script
         const project = await getProject(projectId);

@@ -63,23 +63,19 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
 };
 
 export function getEnvironmentMode(): EnvironmentMode {
-    // If we're on the server (node environment), we can try to get the cookie
-    // Note: This requires being in a request context (Server Component/Route)
-    if (typeof window === 'undefined') {
-        try {
-            // Dynamically import to avoid issues in non-next environments if any
-            const { cookies } = require('next/headers');
-            const cookieStore = cookies();
-            // Since cookies() is now async in Next 15, this might be tricky in a sync function
-            // For now, we'll stick to the explicit pass-through in API routes which is safer 
-            // but let's at least fix the env var check.
-        } catch (e) {
-            // Fail silently if not in Next context
-        }
+    // 1. Check environment variable (baked in at build time or set at runtime)
+    const envVarMode = process.env.NEXT_PUBLIC_ENV_MODE as EnvironmentMode;
+    if (envVarMode && configs[envVarMode]) {
+        return envVarMode;
     }
 
-    const envMode = process.env.NEXT_PUBLIC_ENV_MODE as EnvironmentMode;
-    return envMode && configs[envMode] ? envMode : 'DEV';
+    // 2. Default fallback based on NODE_ENV
+    // If we're in a production environment (deployed), default to PRODUCTION instead of DEV (mock)
+    if (process.env.NODE_ENV === 'production') {
+        return 'PRODUCTION';
+    }
+
+    return 'DEV';
 }
 
 export function getConfig(overrideMode?: EnvironmentMode): EnvironmentConfig {

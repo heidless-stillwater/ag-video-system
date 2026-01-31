@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateDocumentaryScript } from '@/lib/services/ai';
 import { firestoreAdmin } from '@/lib/services/firestore-admin';
 import { cookies } from 'next/headers';
-import { EnvironmentMode } from '@/lib/config/environment';
+import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
 
 export async function GET(
     req: NextRequest,
@@ -47,7 +47,7 @@ export async function POST(
 
         // 2. Generate Script via AI
         const cookieStore = await cookies();
-        const envMode = cookieStore.get('x-env-mode')?.value as EnvironmentMode;
+        const envMode = (cookieStore.get('x-env-mode')?.value as EnvironmentMode) || getEnvironmentMode();
         console.log(`[Script API] Environment Mode detected: ${envMode || 'DEFAULT'}`);
 
         const factStatements = project.research.facts.map(f => f.statement);
