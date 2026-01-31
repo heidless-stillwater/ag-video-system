@@ -45,3 +45,9 @@ next-env.d.ts
 /.firebase/
 /public/renders/
 firebase-debug.log
+
+# secrets
+service-account.json
+*.json.key
+secrets.json
+.runtimeconfig.json
