@@ -12,21 +12,25 @@ import { videoEngine } from './video-engine';
 let vertexAI: VertexAI | null = null;
 
 // Helper to get Vertex AI client with specific config
-function getVertexAI(envMode?: 'DEV' | 'STAGING' | 'PRODUCTION'): VertexAI {
+function getVertexAI(): VertexAI {
     if (vertexAI) return vertexAI;
 
     const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || 'heidless-firebase-2';
 
-    const saPath = path.resolve(process.cwd(), 'service-account.json');
-    const hasKeyFile = fs.existsSync(saPath);
+    // Check for service account file
+    const rootSaPath = path.resolve(process.cwd(), 'service-account.json');
+    const hasKeyFile = fs.existsSync(rootSaPath);
+
+    console.log(`[AI Service] Initializing Vertex AI for project: ${projectId} (Keyfile: ${hasKeyFile})`);
 
     vertexAI = new VertexAI({
         project: projectId,
         location: 'us-central1',
         googleAuthOptions: hasKeyFile ? {
-            keyFile: saPath,
+            keyFile: rootSaPath,
             scopes: ['https://www.googleapis.com/auth/cloud-platform']
         } : {
+            // No keyfile - will fall back to ADC (works automatically on Cloud Run)
             scopes: ['https://www.googleapis.com/auth/cloud-platform']
         }
     });
@@ -36,11 +40,11 @@ function getVertexAI(envMode?: 'DEV' | 'STAGING' | 'PRODUCTION'): VertexAI {
 
 // Helper to get an access token for direct REST calls (required for specialized models like Imagen 3)
 async function getAccessToken(): Promise<string | null | undefined> {
-    const saPath = path.resolve(process.cwd(), 'service-account.json');
-    const hasKeyFile = fs.existsSync(saPath);
+    const rootSaPath = path.resolve(process.cwd(), 'service-account.json');
+    const hasKeyFile = fs.existsSync(rootSaPath);
 
     const auth = new GoogleAuth({
-        keyFile: hasKeyFile ? saPath : undefined,
+        keyFile: hasKeyFile ? rootSaPath : undefined,
         scopes: ['https://www.googleapis.com/auth/cloud-platform']
     });
     const client = await auth.getClient();
@@ -301,7 +305,8 @@ export async function generateVisualCues(
 export async function generateImage(
     prompt: string,
     envMode?: EnvironmentMode,
-    visualStyle: VisualStyle = 'cinematic'
+    visualStyle: VisualStyle = 'cinematic',
+    retryCount = 0
 ): Promise<Buffer | string> {
     const overrideMode = envMode || getEnvironmentMode();
     const config = getConfig(overrideMode);
@@ -372,7 +377,8 @@ export async function generateImage(
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            timeout: 90000 // 90 second timeout for image generation
         });
 
         // Some versions of the API return 'predictions' directly, others wrap it
@@ -402,6 +408,14 @@ export async function generateImage(
 
     } catch (error: any) {
         console.error('[AI Service] Image Gen Error:', error.message);
+
+        // Handle Rate Limiting (429) and simple retries
+        if (error.response?.status === 429 && retryCount < 3) {
+            const delay = Math.pow(2, retryCount) * 1000 + (Math.random() * 1000);
+            console.warn(`[AI Service] Rate limited (429). Retrying in ${Math.round(delay)}ms... (Attempt ${retryCount + 1})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return generateImage(prompt, envMode, visualStyle, retryCount + 1);
+        }
 
         // Fallback to randomized Unsplash if real AI fails in STAGING/PRODUCTION
         const placeholders = [

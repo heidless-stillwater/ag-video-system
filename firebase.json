@@ -9,7 +9,10 @@
                 "node_modules/**",
                 "public/renders/**",
                 "public/audio/**",
-                "tmp/**"
+                "tmp/**",
+                "node_modules/ffprobe-static/bin/darwin/**",
+                "node_modules/ffprobe-static/bin/win32/**",
+                "node_modules/ffprobe-static/bin/linux/ia32/**"
             ],
             "rewrites": [
                 {

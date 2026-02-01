@@ -898,9 +898,15 @@ const DuckingEffect: React.FC<{
     useEffect(() => {
         // "The Enforcer" - Polling loop to ensure volume is applied regardless of race conditions
         const interval = setInterval(() => {
-            // Case 1: Disabled or Stopped -> Enforce Base Volume
+            // Case 1: Disabled or Stopped -> Enforce Base Volume AND Pause
             if (!isEnabled || !isPlaying) {
                 if (musicRef.current) {
+                    // CRITICAL: Pause the audio when playback is stopped
+                    if (!musicRef.current.paused) {
+                        console.log(`[DuckingEffect] Case 1: Pausing music (playback stopped)`);
+                        musicRef.current.pause();
+                    }
+
                     // Ensure not muted (sanity check)
                     if (musicRef.current.muted) musicRef.current.muted = false;
 
@@ -910,6 +916,12 @@ const DuckingEffect: React.FC<{
                     }
                 }
                 if (ambianceRef.current) {
+                    // CRITICAL: Pause the audio when playback is stopped
+                    if (!ambianceRef.current.paused) {
+                        console.log(`[DuckingEffect] Case 1: Pausing ambiance (playback stopped)`);
+                        ambianceRef.current.pause();
+                    }
+
                     // Ensure not muted (sanity check)
                     if (ambianceRef.current.muted) ambianceRef.current.muted = false;
 
@@ -946,7 +958,7 @@ const DuckingEffect: React.FC<{
         }, 100); // Check every 100ms
 
         return () => clearInterval(interval);
-    }, [isEnabled, isNarratorPlaying, isPlaying, musicBaseVolume, ambianceBaseVolume]);
+    }, [isEnabled, isNarratorPlaying, isPlaying, musicBaseVolume, ambianceBaseVolume, musicRef, ambianceRef]);
 
     return null;
 };

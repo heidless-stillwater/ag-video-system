@@ -109,67 +109,125 @@ export async function POST(
                     const isRealMode = config.ai.model !== 'mock';
                     let updatedCues: VisualCue[] = [];
 
+                    const performance = project.performanceProfile || {
+                        mode: 'standard',
+                        concurrency: 1,
+                        imageSynthesisDelay: 12000,
+                        parallelSynthesis: false
+                    };
+
                     if (isRealMode) {
-                        // Sequential processing with rate limiting for real AI
-                        console.log(`[Media API] Using SEQUENTIAL image generation (rate limited for quota)`);
-                        for (let i = 0; i < sectionCues.length; i++) {
-                            const cue = sectionCues[i];
-                            const isMockUrl = cue.url && cue.url.includes('images.unsplash.com');
+                        if (performance.parallelSynthesis) {
+                            console.log(`[Media API] TURBO MODE: Using PARALLEL image generation (concurrency: ${performance.concurrency || 3})`);
 
-                            if (cue.url && !isMockUrl) {
-                                // Already has a real URL, skip
-                                updatedCues.push(cue);
-                                completedCues++;
-                                continue;
-                            }
+                            // Batch processing with limited concurrency
+                            const batchSize = performance.concurrency || 3;
+                            for (let i = 0; i < sectionCues.length; i += batchSize) {
+                                const currentBatch = sectionCues.slice(i, i + batchSize);
+                                const batchResults = await Promise.all(currentBatch.map(async (cue: any) => {
+                                    const isMockUrl = cue.url && cue.url.includes('images.unsplash.com');
+                                    if (cue.url && !isMockUrl) return cue;
 
-                            console.log(`[Media API] Generating image ${i + 1}/${sectionCues.length} for cue: ${cue.description.substring(0, 30)}... (Style: ${visualStyle})`);
+                                    try {
+                                        const imageResult = await generateImage(cue.description, envMode, visualStyle);
+                                        let finalUrl: string;
+                                        if (typeof imageResult === 'string' && imageResult.startsWith('http')) {
+                                            finalUrl = imageResult;
+                                        } else if (Buffer.isBuffer(imageResult)) {
+                                            const uploadedUrl = await storageService.uploadImage(script.projectId, cue.id, imageResult);
+                                            finalUrl = `${uploadedUrl}?t=${Date.now()}`;
+                                        } else {
+                                            throw new Error('Unexpected image result type');
+                                        }
+                                        return { ...cue, url: finalUrl, status: 'completed' as const };
+                                    } catch (err: any) {
+                                        return { ...cue, url: '', status: 'failed' as const, error: err.message };
+                                    }
+                                }));
 
-                            try {
-                                const imageResult = await generateImage(cue.description, envMode, visualStyle);
-                                let finalUrl: string;
-                                if (typeof imageResult === 'string' && imageResult.startsWith('http')) {
-                                    finalUrl = imageResult;
-                                } else if (Buffer.isBuffer(imageResult)) {
-                                    const uploadedUrl = await storageService.uploadImage(script.projectId, cue.id, imageResult);
-                                    finalUrl = `${uploadedUrl}?t=${Date.now()}`;
-                                } else {
-                                    throw new Error('Unexpected image result type');
-                                }
+                                updatedCues.push(...batchResults as VisualCue[]);
+                                completedCues += batchResults.length;
 
-                                updatedCues.push({ ...cue, url: finalUrl, status: 'completed' as const });
-                                completedCues++;
-
-                                // CHECK FOR CANCELLATION (Every image - Real AI Mode)
-                                const currentProject = await getProject(projectId);
-                                if (!currentProject || currentProject.status !== 'generating_media') {
-                                    console.log('[Media API] Process cancelled by user request (Real Mode).');
-                                    return; // EXIT THE PROCESS
-                                }
-
-                                // Incremental Update
+                                // Update progress after batch
                                 const currentProgress = Math.round((completedCues / totalCues) * 100);
-                                const truncatedDesc = cue.description.length > 40 ? cue.description.substring(0, 40) + '...' : cue.description;
                                 updatedSections[sectionIndex] = { ...section, visualCues: updatedCues };
                                 await updateScript(scriptId, { sections: updatedSections });
                                 await updateProject(projectId, {
                                     mediaProgress: currentProgress,
-                                    mediaMessage: `Painting scene ${completedCues} of ${totalCues}: "${truncatedDesc}"`
+                                    mediaMessage: `Turbo Synthesis: ${completedCues}/${totalCues} painted...`
                                 } as any);
 
-                                // Add delay between requests (12 seconds + jitter = ~5 requests per minute max)
-                                if (i < sectionCues.length - 1) {
-                                    const delay = 12000 + (Math.random() * 2000);
-                                    await updateProject(projectId, { mediaMessage: `Safety pause (${Math.round(delay / 1000)}s)...` } as any);
-                                    console.log(`[Media API] Waiting ${Math.round(delay / 1000)} seconds before next image generation...`);
+                                if (i + batchSize < sectionCues.length) {
+                                    const delay = performance.imageSynthesisDelay || 2000;
                                     await new Promise(resolve => setTimeout(resolve, delay));
                                 }
-                            } catch (error: any) {
-                                console.error(`[Media API] Image generation failed for cue ${i + 1}:`, error.message);
-                                completedCues++;
-                                updatedCues.push({ ...cue, url: '', status: 'failed' as const, error: error.message });
-                                updatedSections[sectionIndex] = { ...section, visualCues: updatedCues };
-                                await updateScript(scriptId, { sections: updatedSections });
+                            }
+                        } else {
+                            // Sequential processing with rate limiting for real AI
+                            console.log(`[Media API] Using SEQUENTIAL image generation (Delay: ${performance.imageSynthesisDelay}ms)`);
+                            for (let i = 0; i < sectionCues.length; i++) {
+                                const cue = sectionCues[i];
+                                const isMockUrl = cue.url && cue.url.includes('images.unsplash.com');
+
+                                if (cue.url && !isMockUrl) {
+                                    // Already has a real URL, skip
+                                    updatedCues.push(cue);
+                                    completedCues++;
+                                    continue;
+                                }
+
+                                console.log(`[Media API] Generating image ${i + 1}/${sectionCues.length} for cue: ${cue.description.substring(0, 30)}... (Style: ${visualStyle})`);
+
+                                try {
+                                    const imageResult = await generateImage(cue.description, envMode, visualStyle);
+                                    let finalUrl: string;
+                                    if (typeof imageResult === 'string' && imageResult.startsWith('http')) {
+                                        finalUrl = imageResult;
+                                    } else if (Buffer.isBuffer(imageResult)) {
+                                        const uploadedUrl = await storageService.uploadImage(script.projectId, cue.id, imageResult);
+                                        finalUrl = `${uploadedUrl}?t=${Date.now()}`;
+                                    } else {
+                                        throw new Error('Unexpected image result type');
+                                    }
+
+                                    updatedCues.push({ ...cue, url: finalUrl, status: 'completed' as const });
+                                    completedCues++;
+
+                                    // CHECK FOR CANCELLATION (Every image - Real AI Mode)
+                                    const currentProject = await getProject(projectId);
+                                    if (!currentProject || currentProject.status !== 'generating_media') {
+                                        console.log('[Media API] Process cancelled by user request (Real Mode).');
+                                        return; // EXIT THE PROCESS
+                                    }
+
+                                    // Incremental Update
+                                    const currentProgress = Math.round((completedCues / totalCues) * 100);
+                                    const truncatedDesc = cue.description.length > 40 ? cue.description.substring(0, 40) + '...' : cue.description;
+                                    updatedSections[sectionIndex] = { ...section, visualCues: updatedCues };
+                                    await updateScript(scriptId, { sections: updatedSections });
+                                    await updateProject(projectId, {
+                                        mediaProgress: currentProgress,
+                                        mediaMessage: `Painting scene ${completedCues} of ${totalCues}: "${truncatedDesc}"`
+                                    } as any);
+
+                                    // Add delay between requests
+                                    if (i < sectionCues.length - 1) {
+                                        const delay = performance.imageSynthesisDelay || 12000;
+                                        const jitter = performance.mode === 'turbo' ? 500 : 2000;
+                                        const finalDelay = delay + (Math.random() * jitter);
+
+                                        if (finalDelay > 1000) {
+                                            await updateProject(projectId, { mediaMessage: `Pacing (${Math.round(finalDelay / 1000)}s)...` } as any);
+                                            await new Promise(resolve => setTimeout(resolve, finalDelay));
+                                        }
+                                    }
+                                } catch (error: any) {
+                                    console.error(`[Media API] Image generation failed for cue ${i + 1}:`, error.message);
+                                    completedCues++;
+                                    updatedCues.push({ ...cue, url: '', status: 'failed' as const, error: error.message });
+                                    updatedSections[sectionIndex] = { ...section, visualCues: updatedCues };
+                                    await updateScript(scriptId, { sections: updatedSections });
+                                }
                             }
                         }
                     } else {
@@ -222,10 +280,11 @@ export async function POST(
 
                     // Add a small delay between sections in real mode too, to be extra safe
                     if (config.ai.model !== 'mock' && sectionIndex < updatedSections.length - 1) {
-                        const sectionDelay = 12000 + (Math.random() * 2000);
-                        await updateProject(projectId, { mediaMessage: `Pacing Art Factory (${Math.round(sectionDelay / 1000)}s)...` } as any);
-                        console.log(`[Media API] Waiting ${Math.round(sectionDelay / 1000)} seconds before processing next section...`);
-                        await new Promise(resolve => setTimeout(resolve, sectionDelay));
+                        const sectionDelay = performance.mode === 'turbo' ? 2000 : 12000;
+                        if (sectionDelay > 0) {
+                            await updateProject(projectId, { mediaMessage: `Section break (${Math.round(sectionDelay / 1000)}s)...` } as any);
+                            await new Promise(resolve => setTimeout(resolve, sectionDelay));
+                        }
                     }
                 }
 

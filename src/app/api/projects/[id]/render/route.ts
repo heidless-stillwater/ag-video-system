@@ -65,7 +65,8 @@ export async function POST(
             project.subtitleStyle ?? 'minimal',
             '16:9', // aspectRatio
             undefined, // customFileName
-            async (progress, message) => {
+            project.performanceProfile as any, // New argument: Performance Profile
+            async (progress: number, message: string) => {
                 console.log(`[Render API] Progress Update: ${progress}% - ${message}`);
                 await updateProject(projectId, {
                     renderProgress: progress,

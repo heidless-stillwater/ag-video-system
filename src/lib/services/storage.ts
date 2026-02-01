@@ -96,7 +96,7 @@ export const storageService = {
     /**
      * Gets a readable stream and file size for a rendered video.
      */
-    async getVideoStream(projectId: string, archiveId?: string, customFileName?: string): Promise<{ stream: NodeJS.ReadableStream; size: number }> {
+    async getVideoStream(projectId: string, archiveId?: string, customFileName?: string, start?: number, end?: number): Promise<{ stream: NodeJS.ReadableStream; size: number }> {
         const bucket = storage.bucket(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET);
         let fileName = `projects/${projectId}/renders/${projectId}.mp4`;
 
@@ -112,9 +112,11 @@ export const storageService = {
         if (!exists) throw new Error(`Video file not found in storage: ${fileName}`);
 
         const [metadata] = await file.getMetadata();
+        const size = parseInt(metadata.size, 10);
+
         return {
-            stream: file.createReadStream(),
-            size: parseInt(metadata.size, 10)
+            stream: file.createReadStream({ start, end }),
+            size
         };
     },
 

@@ -105,6 +105,49 @@ export default function ProjectDetailPage() {
         }
     };
 
+    const handleOpenPublishModal = async () => {
+        if (!project || !script) return;
+
+        // Use existing SEO metadata if available
+        if (project.seoMetadata) {
+            setPublishMetadata({
+                title: project.seoMetadata.selectedTitle || project.seoMetadata.titles[0] || project.title,
+                description: project.seoMetadata.description || project.description || '',
+                tags: project.seoMetadata.tags || []
+            });
+            setIsPublishModalOpen(true);
+            return;
+        }
+
+        // If already publishing but metadata is somehow missing, use defaults and open
+        if (project.status === 'publishing') {
+            setPublishMetadata({
+                title: project.title,
+                description: project.description || '',
+                tags: []
+            });
+            setIsPublishModalOpen(true);
+            return;
+        }
+
+        setIsGeneratingMetadata(true);
+        setError(null);
+        try {
+            const response = await fetch(`/api/projects/${project.id}/youtube/metadata?scriptId=${script.id}`);
+            const data = await response.json();
+            if (data.metadata) {
+                setPublishMetadata(data.metadata);
+                setIsPublishModalOpen(true);
+            } else {
+                throw new Error(data.error || 'Failed to generate metadata');
+            }
+        } catch (err: any) {
+            setError('Metadata generation failed: ' + err.message);
+        } finally {
+            setIsGeneratingMetadata(false);
+        }
+    };
+
     const handleSnapshot = async (label?: string) => {
         if (!project) return;
         try {
@@ -195,7 +238,9 @@ export default function ProjectDetailPage() {
     } | null>(null);
 
     const interceptAction = (action: () => void, title: string, message: string) => {
-        if (envConfig.ai.limitAI) {
+        // Enforce confirmation for ANY live environment (Staging or Production)
+        // DEV mode is mock/free, so it doesn't need confirmation.
+        if (envMode !== 'DEV') {
             setStepConfirm({
                 isOpen: true,
                 title,
@@ -745,39 +790,42 @@ export default function ProjectDetailPage() {
 
     const handleGenerateAllAudio = async (voiceProfile?: Project['voiceProfile']) => {
         if (!project || !script) return;
-        setIsGeneratingAllAudio(true);
-        setError(null);
 
-        try {
-            // Process all sections to ensure voice consistency
-            const sectionsToRender = script.sections;
+        interceptAction(async () => {
+            setIsGeneratingAllAudio(true);
+            setError(null);
 
-            for (const section of sectionsToRender) {
-                setGeneratingAudioId(section.id);
-                const response = await fetch(`/api/projects/${project.id}/tts`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        scriptId: script.id,
-                        sectionId: section.id,
-                        voiceProfile: voiceProfile || project?.voiceProfile || script.voiceProfile || 'standard'
-                    }),
-                });
+            try {
+                // Process all sections to ensure voice consistency
+                const sectionsToRender = script.sections;
 
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(`Failed on "${section.title}": ${data.error || 'Unknown error'}`);
+                for (const section of sectionsToRender) {
+                    setGeneratingAudioId(section.id);
+                    const response = await fetch(`/api/projects/${project.id}/tts`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            scriptId: script.id,
+                            sectionId: section.id,
+                            voiceProfile: voiceProfile || project?.voiceProfile || script.voiceProfile || 'standard'
+                        }),
+                    });
+
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(`Failed on "${section.title}": ${data.error || 'Unknown error'}`);
+                    }
+
+                    // Refresh script data after each successful generation to update UI
+                    await loadProjectAndScript();
                 }
-
-                // Refresh script data after each successful generation to update UI
-                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Batch audio failed: ' + err.message);
+            } finally {
+                setIsGeneratingAllAudio(false);
+                setGeneratingAudioId(null);
             }
-        } catch (err: any) {
-            setError('Batch audio failed: ' + err.message);
-        } finally {
-            setIsGeneratingAllAudio(false);
-            setGeneratingAudioId(null);
-        }
+        }, 'Generate Full Audio?', 'This will regenerate speech audio for ALL sections using Google Cloud TTS. This consumes Cloud quota.');
     };
 
     const handleGenerateMedia = async () => {
@@ -835,34 +883,36 @@ export default function ProjectDetailPage() {
 
     const handleAssemble = async () => {
         if (!project || !script) return;
-        setIsAssembling(true);
-        setError(null);
 
-        try {
-            const response = await fetch(`/api/projects/${project.id}/assemble`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ scriptId: script.id }),
-            });
+        interceptAction(async () => {
+            setIsAssembling(true);
+            setError(null);
+            try {
+                const response = await fetch(`/api/projects/${project.id}/assemble`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scriptId: script.id }),
+                });
 
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Assembly failed');
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Assembly failed');
+                }
+
+                // Calculate timeline and open preview
+                const calcedTimeline = videoEngine.calculateTimeline(script);
+                setTimeline(calcedTimeline);
+                setIsInlinePreviewActive(true);
+                setActiveViewType('preview');
+                setIsPreviewOpen(false); // Ensure full-screen is closed
+
+                await loadProjectAndScript();
+            } catch (err: any) {
+                setError('Assembly failed: ' + err.message);
+            } finally {
+                setIsAssembling(false);
             }
-
-            // Calculate timeline and open preview
-            const calcedTimeline = videoEngine.calculateTimeline(script);
-            setTimeline(calcedTimeline);
-            setIsInlinePreviewActive(true);
-            setActiveViewType('preview');
-            setIsPreviewOpen(false); // Ensure full-screen is closed
-
-            await loadProjectAndScript();
-        } catch (err: any) {
-            setError('Assembly failed: ' + err.message);
-        } finally {
-            setIsAssembling(false);
-        }
+        }, 'Assemble Video?', 'This will render the full video on the server. This may consume Cloud Run compute time.');
     };
 
     const handleRender = async () => {
@@ -908,45 +958,51 @@ export default function ProjectDetailPage() {
 
     const handleGenerateShortsCandidates = async () => {
         if (!project || !script) return;
-        setIsGeneratingShortsCandidates(true);
-        try {
-            const response = await fetch(`/api/projects/${projectId}/shorts/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ scriptId: script.id }),
-            });
-            const data = await response.json();
-            if (data.success) {
-                // Refresh project to get new shorts
-                await loadProjectAndScript(true);
-            } else {
-                throw new Error(data.error || 'Failed to generate shorts');
+
+        interceptAction(async () => {
+            setIsGeneratingShortsCandidates(true);
+            try {
+                const response = await fetch(`/api/projects/${projectId}/shorts/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scriptId: script.id }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    // Refresh project to get new shorts
+                    await loadProjectAndScript(true);
+                } else {
+                    throw new Error(data.error || 'Failed to generate shorts');
+                }
+            } catch (err: any) {
+                setError('Shorts Generation Error: ' + err.message);
+            } finally {
+                setIsGeneratingShortsCandidates(false);
             }
-        } catch (err: any) {
-            setError('Shorts Generation Error: ' + err.message);
-        } finally {
-            setIsGeneratingShortsCandidates(false);
-        }
+        }, 'Generate Shorts Candidates?', 'This uses AI to analyze your script for viral moments. This consumes AI quota.');
     };
 
     const handleRenderShort = async (clipId: string) => {
         if (!project || !script) return;
-        try {
-            const response = await fetch(`/api/projects/${projectId}/shorts/render`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ scriptId: script.id, clipId }),
-            });
-            const data = await response.json();
-            if (data.success) {
-                // Start polling for this specific short's status
-                pollShortStatus(clipId);
-            } else {
-                throw new Error(data.error || 'Failed to start short render');
+
+        interceptAction(async () => {
+            try {
+                const response = await fetch(`/api/projects/${projectId}/shorts/render`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scriptId: script.id, clipId }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    // Start polling for this specific short's status
+                    pollShortStatus(clipId);
+                } else {
+                    throw new Error(data.error || 'Failed to start short render');
+                }
+            } catch (err: any) {
+                setError('Short Render Error: ' + err.message);
             }
-        } catch (err: any) {
-            setError('Short Render Error: ' + err.message);
-        }
+        }, 'Render Short?', 'This will render this clip as a vertical video. This consumes Cloud Run quota.');
     };
 
     const pollShortStatus = async (clipId: string) => {
@@ -1227,68 +1283,16 @@ export default function ProjectDetailPage() {
     const handleDownloadMP4 = async () => {
         if (!project?.downloadUrl) return;
 
-        setIsDownloading(true);
-        try {
-            const response = await fetch(project.downloadUrl);
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Documentary_${project.title.replace(/\s+/g, '_')}.mp4`;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-        } catch (err: any) {
-            console.error('Download failed:', err);
-            setError('Download failed: ' + err.message);
-        } finally {
-            setIsDownloading(false);
-        }
+        // Use a direct anchor tag click to avoid memory issues with massive 4K blobs
+        const downloadUrl = `${project.downloadUrl}${project.downloadUrl.includes('?') ? '&' : '?'}download=true`;
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `Documentary_${project.title.replace(/\s+/g, '_')}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
     };
 
-    const handleOpenPublishModal = async () => {
-        if (!project || !script) return;
-
-        // Use existing SEO metadata if available
-        if (project.seoMetadata) {
-            setPublishMetadata({
-                title: project.seoMetadata.selectedTitle || project.seoMetadata.titles[0] || project.title,
-                description: project.seoMetadata.description || project.description || '',
-                tags: project.seoMetadata.tags || []
-            });
-            setIsPublishModalOpen(true);
-            return;
-        }
-
-        // If already publishing but metadata is somehow missing, use defaults and open
-        if (project.status === 'publishing') {
-            setPublishMetadata({
-                title: project.title,
-                description: project.description || '',
-                tags: []
-            });
-            setIsPublishModalOpen(true);
-            return;
-        }
-
-        setIsGeneratingMetadata(true);
-        setError(null);
-        try {
-            const response = await fetch(`/api/projects/${project.id}/youtube/metadata?scriptId=${script.id}`);
-            const data = await response.json();
-            if (data.metadata) {
-                setPublishMetadata(data.metadata);
-                setIsPublishModalOpen(true);
-            } else {
-                throw new Error(data.error || 'Failed to generate metadata');
-            }
-        } catch (err: any) {
-            setError('Metadata generation failed: ' + err.message);
-        } finally {
-            setIsGeneratingMetadata(false);
-        }
-    };
 
     const handleConfirmPublish = async (metadata: any, privacy: string) => {
         if (!project || !script || !currentUser) return;

@@ -13,22 +13,55 @@ export async function GET(
     const { searchParams } = new URL(req.url);
     const archiveId = searchParams.get('archiveId') || undefined;
     const fileName = searchParams.get('fileName') || undefined;
+    const isDownload = searchParams.get('download') === 'true';
 
     try {
-        const { stream, size } = await storageService.getVideoStream(projectId, archiveId, fileName);
+        const range = req.headers.get('range');
 
-        // Standard headers for video streaming
+        // 1. Initial size check
+        const { size: totalSize } = await storageService.getVideoStream(projectId, archiveId, fileName);
+
+        let start = 0;
+        let end = totalSize - 1;
+        let isPartial = false;
+
+        // 2. Parse Range Header (e.g., "bytes=0-1023")
+        if (range && !isDownload) {
+            const rangeMatch = range.match(/bytes=(\d*)-(\d*)/);
+            if (rangeMatch) {
+                const s = rangeMatch[1];
+                const e = rangeMatch[2];
+                if (s) start = parseInt(s, 10);
+                if (e) end = parseInt(e, 10);
+
+                // Validate bounds
+                start = Math.max(0, start);
+                end = Math.min(totalSize - 1, end);
+
+                if (start <= end) {
+                    isPartial = true;
+                }
+            }
+        }
+
+        const chunksize = (end - start) + 1;
+        const { stream } = await storageService.getVideoStream(projectId, archiveId, fileName, start, end);
+
+        // 3. Standard headers for video streaming
         const headers = new Headers({
             'Content-Type': 'video/mp4',
-            'Content-Length': size.toString(),
-            'Accept-Ranges': 'bytes', // Crucial for Safari and seeking
-            'Content-Disposition': `inline; filename="${projectId}.mp4"`
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunksize.toString(),
+            'Content-Disposition': `${isDownload ? 'attachment' : 'inline'}; filename="${projectId}.mp4"`,
+            'Cache-Control': isDownload ? 'no-cache' : 'public, max-age=3600'
         });
 
-        // Convert the Node stream to a Web readable stream for Next.js response
-        // @ts-ignore - ReadableStream conversion
+        if (isPartial) {
+            headers.set('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+        }
+
         return new NextResponse(stream as any, {
-            status: 200,
+            status: isPartial ? 206 : 200,
             headers,
         });
 

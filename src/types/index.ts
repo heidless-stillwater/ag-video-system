@@ -124,6 +124,12 @@ export interface Project {
     visualStyle?: VisualStyle;
     visualSnapshots?: VisualSnapshot[];
     shorts?: ViralClip[];
+    performanceProfile?: {
+        mode: 'standard' | 'turbo';
+        concurrency: number; // 1-10
+        imageSynthesisDelay: number; // ms
+        parallelSynthesis: boolean;
+    };
     _cancelUpload?: boolean; // Internal flag to signal upload cancellation
     createdAt: Date;
     updatedAt: Date;

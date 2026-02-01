@@ -100,7 +100,7 @@ export const MP4Player: React.FC<MP4PlayerProps> = ({ url, title }) => {
                                 Rendered 4K
                             </div>
                             <a
-                                href={url}
+                                href={`${url}${url.includes('?') ? '&' : '?'}download=true`}
                                 download={`${title}.mp4`}
                                 className="text-white/40 hover:text-white transition-colors"
                                 title="Download"

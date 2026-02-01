@@ -42,16 +42,34 @@ if (existingApp) {
             const saContent = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
             credential = admin.credential.cert(saContent);
         }
-        // 2. Local File (Dev)
+        // 2. Local File (Dev/Server)
         else {
-            const possibleSaPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-            if (possibleSaPath && fs.existsSync(path.resolve(possibleSaPath))) {
-                console.log(`[Firebase Admin] 🔑 Using file: ${possibleSaPath}`);
-                credential = admin.credential.cert(possibleSaPath);
+            // Priority 1: Explicit local file in the project root
+            const rootSaPath = path.resolve(process.cwd(), 'service-account.json');
+            if (fs.existsSync(rootSaPath)) {
+                console.log(`[Firebase Admin] 🔑 Using local root file: ${rootSaPath}`);
+                credential = admin.credential.cert(rootSaPath);
+            }
+            // Priority 2: Google Application Credentials (if it exists and looks like a cert)
+            else {
+                const possibleSaPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+                if (possibleSaPath && fs.existsSync(possibleSaPath)) {
+                    try {
+                        // Check if it's a valid service account JSON (not an ADC auth file)
+                        const content = JSON.parse(fs.readFileSync(possibleSaPath, 'utf8'));
+                        if (content.project_id && content.private_key) {
+                            console.log(`[Firebase Admin] 🔑 Using file from ENV: ${possibleSaPath}`);
+                            credential = admin.credential.cert(possibleSaPath);
+                        }
+                    } catch (e) {
+                        // Not a valid JSON or not a SA cert, ignore and fall back
+                        console.warn(`[Firebase Admin] ⚠️ Env file is not a valid service account cert: ${possibleSaPath}`);
+                    }
+                }
             }
         }
 
-        // 3. ADC Fallback (Cloud Run)
+        // 3. ADC Fallback (Cloud Run / Deployed Environment)
         if (!credential) {
             console.log('[Firebase Admin] ☁️ Attempting Application Default Credentials (ADC)');
             credential = admin.credential.applicationDefault();

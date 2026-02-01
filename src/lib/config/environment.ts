@@ -63,16 +63,31 @@ const configs: Record<EnvironmentMode, EnvironmentConfig> = {
 };
 
 export function getEnvironmentMode(): EnvironmentMode {
-    // 1. Check environment variable (baked in at build time or set at runtime)
+    // 1. Check for explicit override in environment (usually baked during build)
     const envVarMode = process.env.NEXT_PUBLIC_ENV_MODE as EnvironmentMode;
-    if (envVarMode && configs[envVarMode]) {
-        return envVarMode;
+
+    // 2. Identify if we are in a production runtime (Cloud Run, Vercel, Firebase Functions)
+    const isProductionRuntime =
+        process.env.NODE_ENV === 'production' ||
+        process.env.VERCEL === '1' ||
+        !!process.env.K_SERVICE || // Cloud Run
+        !!process.env.FUNCTION_NAME; // Firebase Functions
+
+    // 3. Fallback logic:
+    // - If it's a production runtime, default to PRODUCTION unless specifically forced otherwise
+    // - Otherwise, respect the environment variable if valid
+    // - Finally, default to DEV
+
+    if (isProductionRuntime) {
+        // In production runtime, we only allow STAGING or PRODUCTION
+        if (envVarMode === 'STAGING' || envVarMode === 'STAGING_LIMITED') {
+            return envVarMode;
+        }
+        return 'PRODUCTION';
     }
 
-    // 2. Default fallback based on NODE_ENV
-    // If we're in a production environment (deployed), default to PRODUCTION instead of DEV (mock)
-    if (process.env.NODE_ENV === 'production') {
-        return 'PRODUCTION';
+    if (envVarMode && configs[envVarMode]) {
+        return envVarMode;
     }
 
     return 'DEV';

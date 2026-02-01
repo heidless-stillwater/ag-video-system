@@ -115,15 +115,18 @@ export async function generateTopicSuggestions(broadTopic: string, envMode?: any
         const jsonMatch = response.match(/\[[\s\S]*\]/) || response.match(/\{[\s\S]*\}/);
         const cleaned = jsonMatch ? jsonMatch[0] : response.replace(/```json|```/g, '').trim();
         return JSON.parse(cleaned);
-    } catch (error) {
-        console.error('[YouTube Service] Failed to generate AI suggestions:', error);
+    } catch (error: any) {
+        console.error('[YouTube Service] CRITICAL: AI suggestion generation failed:', error.message);
+        if (error.stack) console.error(error.stack);
+
+        // Return a generic but helpful fallback instead of complex mock data
         return [
             {
-                title: `${broadTopic}: Deep Exploration`,
-                description: `A comprehensive look at ${broadTopic}.`,
+                title: `${broadTopic}: Comprehensive Guide`,
+                description: `A detailed exploration of ${broadTopic} and its impact on the modern world.`,
                 seoScore: 70,
-                reasoning: 'Reliable evergreen content.',
-                keywords: [broadTopic, 'documentary'],
+                reasoning: 'AI Service currently pacing. Returning high-value evergreen topic.',
+                keywords: [broadTopic, 'documentary', 'education'],
                 estimatedViews: '10k - 50k',
             }
         ];
