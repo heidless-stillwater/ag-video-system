@@ -23,7 +23,7 @@ const TIMEOUT_MS = 10000; // 10 second timeout
 export async function checkVertexAI(): Promise<HealthCheckResult> {
     const startTime = Date.now();
     try {
-        const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+        const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GCLOUD_PROJECT || 'heidless-firebase-2';
         const location = 'us-central1';
         const saPath = path.resolve(process.cwd(), 'service-account.json');
         const keyFile = fs.existsSync(saPath) ? saPath : undefined;
@@ -56,6 +56,7 @@ export async function checkVertexAI(): Promise<HealthCheckResult> {
             lastChecked: new Date()
         };
     } catch (error: any) {
+        console.error('[Health Check] Vertex AI Check FAILED:', error);
         return {
             service: 'Vertex AI (Gemini)',
             status: 'down',

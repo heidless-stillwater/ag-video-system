@@ -1,6 +1,6 @@
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import { getConfig, estimateCost, EnvironmentMode } from '../config/environment';
+import { getConfig, EnvironmentMode } from '../config/environment';
 
 export interface UsageLog {
     service: 'vertex-ai' | 'google-tts' | 'cloud-run' | 'render' | 'storage';
@@ -13,6 +13,24 @@ export interface UsageLog {
     projectId?: string;
     userId?: string;
     metadata?: Record<string, any>;
+    timestamp?: any;
+}
+
+export interface ProjectBudget {
+    spent: number;
+    projectedRemaining: number;
+    projectedTotal: number;
+}
+
+export function calculateProjectBudget(charCount: number, logs: UsageLog[]): ProjectBudget {
+    const spent = logs.reduce((sum, log) => sum + (log.estimatedCost || 0), 0);
+    // Rough estimate for remaining: $0.05 per 1k chars for everything combined
+    const projectedRemaining = Math.max(0, (charCount / 1000) * 0.05 - (spent * 0.2));
+    return {
+        spent,
+        projectedRemaining,
+        projectedTotal: spent + projectedRemaining
+    };
 }
 
 export const analyticsService = {

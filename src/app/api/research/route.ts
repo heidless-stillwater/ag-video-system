@@ -5,6 +5,7 @@ import { getProject, getTopic } from '@/lib/services/firestore-admin';
 import { Fact, ResearchSource } from '@/types';
 import { cookies } from 'next/headers';
 import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
+import { analyticsService } from '@/lib/services/analytics';
 
 /**
  * API Route for orchestrating the research phase.
@@ -64,6 +65,18 @@ export async function POST(req: NextRequest) {
 
             const rawFacts = await extractFacts(combinedContent, envMode);
             console.log(`[Research API] Extracted ${rawFacts.length} facts.`);
+
+            // Track Usage
+            await analyticsService.logUsage({
+                service: 'vertex-ai',
+                operation: 'script-generation', // Using this as proxy for research LLM usage
+                model: 'gemini-1.5-flash',
+                inputCount: combinedContent.length,
+                outputCount: rawFacts.join(' ').length,
+                projectId,
+                userId: project.userId,
+                executionTimeMs: 2000 // Approximate
+            }, envMode);
 
             extractedFacts = rawFacts.map(statement => ({
                 id: Math.random().toString(36).substr(2, 9),

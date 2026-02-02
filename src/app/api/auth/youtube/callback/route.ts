@@ -63,8 +63,13 @@ export async function GET(req: NextRequest) {
         }
 
         // 5. Build final absolute URL
-        // We use req.nextUrl.origin to ensure consistency with the current request context
-        const finalUrl = new URL(destination, req.nextUrl.origin);
+        // FORCE the production domain to avoid localhost redirects from internal container networking
+        const baseUrl = 'https://autovideo-v0-dev.web.app';
+
+        // Ensure relative paths don't double-slash
+        const safeDest = destination.startsWith('/') ? destination.substring(1) : destination;
+        const finalUrl = new URL(safeDest, baseUrl);
+
         finalUrl.searchParams.set('success', 'youtube_connected');
 
         console.log(`[YouTube Callback SUCCESS] Redirecting to: ${finalUrl.toString()}`);
@@ -74,7 +79,8 @@ export async function GET(req: NextRequest) {
         console.error('[YouTube Callback FATAL] OAuth Failure:', error);
 
         // Always return to root on error to avoid 404 loops
-        const errorUrl = new URL('/', req.nextUrl.origin);
+        const baseUrl = 'https://autovideo-v0-dev.web.app';
+        const errorUrl = new URL('/', baseUrl);
         errorUrl.searchParams.set('error', error.message || 'auth_failed');
         return NextResponse.redirect(errorUrl);
     }

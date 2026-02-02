@@ -4,6 +4,8 @@ import { storageService } from '@/lib/services/storage';
 import { getScript, updateScript } from '@/lib/services/firestore-admin';
 import { cookies } from 'next/headers';
 import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
+import { analyticsService } from '@/lib/services/analytics';
+import { getProject } from '@/lib/services/firestore-admin';
 
 /**
  * API Route for generating audio for a specific script section.
@@ -44,6 +46,20 @@ export async function POST(
             script.languageCode || 'en-US',
             voiceProfile || script.voiceProfile || 'standard'
         );
+
+        // Track Usage
+        const project = await getProject(projectId);
+        if (project) {
+            await analyticsService.logUsage({
+                service: 'google-tts',
+                operation: 'speech-synthesis',
+                model: voiceProfile || script.voiceProfile || 'standard',
+                inputCount: section.content.length,
+                projectId,
+                userId: project.userId,
+                executionTimeMs: 1000 // Approximate
+            }, envMode);
+        }
 
         // 3. Upload to Firebase Storage
         console.log(`[TTS API] Uploading audio to storage...`);

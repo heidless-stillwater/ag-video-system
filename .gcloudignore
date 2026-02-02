@@ -1,14 +1,13 @@
 .gcloudignore
 .git
 .gitignore
-node_modules/ffprobe-static/bin/darwin/
-node_modules/ffprobe-static/bin/win32/
-node_modules/ffprobe-static/bin/linux/ia32/
-node_modules/ffmpeg-static/bin/darwin/
-node_modules/ffmpeg-static/bin/win32/
-node_modules/ffmpeg-static/bin/linux/ia32/
+node_modules/
 .firebase/
 .next/
 tmp/
 public/renders/
 public/audio/
+
+# Explicitly include secrets (overriding .gitignore)
+!service-account.json
+!.env.local

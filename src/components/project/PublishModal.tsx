@@ -14,7 +14,7 @@ interface PublishModalProps {
     onClose: () => void;
     onConfirm: (metadata: PublishMetadata, privacy: 'public' | 'unlisted' | 'private') => Promise<void>;
     onCancel: () => Promise<void>;
-    onOptimize: () => Promise<void>;
+    onOptimize: (metadata: PublishMetadata) => Promise<void>;
     isOptimizing: boolean;
     initialMetadata: PublishMetadata | null;
     thumbnailUrl?: string;
@@ -117,7 +117,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                     </div>
                     {status !== 'published' && (
                         <button
-                            onClick={onOptimize}
+                            onClick={() => onOptimize(metadata)}
                             disabled={isOptimizing || isPublishing}
                             className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${isOptimizing
                                 ? 'bg-purple-500/20 text-purple-400 animate-pulse'
@@ -149,25 +149,35 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                             <p className="text-white font-bold text-lg">Your documentary is now live!</p>
                             <p className="text-slate-400 text-sm mt-1">Video ID: <span className="font-mono text-red-400 uppercase tracking-widest">{youtubeUrl?.split('v=')[1] || 'Unknown'}</span></p>
                         </div>
-                        <a
-                            href={youtubeUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-8 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-red-600/20"
-                        >
-                            <span>📺 View on YouTube</span>
-                        </a>
+                        <div className="flex gap-4">
+                            <a
+                                href={youtubeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-8 py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-red-600/20"
+                            >
+                                <span>📺 View on YouTube</span>
+                            </a>
+                            <button
+                                onClick={onClose}
+                                className="px-8 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold transition-all border border-slate-700"
+                            >
+                                Close
+                            </button>
+                        </div>
                     </div>
                 ) : (
                     <div className="space-y-6 overflow-y-auto pr-2 flex-grow custom-scrollbar">
                         {/* Video Review Section */}
-                        {absoluteVideoUrl && (
-                            <div className="space-y-3">
-                                <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-widest">Review Final Movie</label>
+                        <div className="space-y-3">
+                            <label className="block text-[10px] text-slate-500 font-bold uppercase tracking-widest">Review Final Movie</label>
+                            {absoluteVideoUrl ? (
                                 <div className="aspect-video bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-2xl relative group">
                                     <video
+                                        key={absoluteVideoUrl}
                                         src={absoluteVideoUrl}
                                         controls
+                                        preload="auto"
                                         className="w-full h-full object-contain"
                                         poster={thumbnailUrl}
                                     />
@@ -177,8 +187,20 @@ export const PublishModal: React.FC<PublishModalProps> = ({
                                         </span>
                                     </div>
                                 </div>
-                            </div>
-                        )}
+                            ) : (
+                                <div className="aspect-video bg-slate-950 border border-dashed border-slate-800 rounded-2xl flex flex-col items-center justify-center gap-3">
+                                    <div className="w-12 h-12 bg-slate-900 rounded-full flex items-center justify-center">
+                                        <svg className="w-6 h-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                        </svg>
+                                    </div>
+                                    <div className="text-center">
+                                        <p className="text-sm font-bold text-slate-500">Video render not found</p>
+                                        <p className="text-[10px] text-slate-600 max-w-[200px]">You can still prepare metadata, but rendering first is recommended.</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Left Column: Viral Preview */}

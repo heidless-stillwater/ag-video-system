@@ -3,6 +3,7 @@ import { generateDocumentaryScript } from '@/lib/services/ai';
 import { firestoreAdmin } from '@/lib/services/firestore-admin';
 import { cookies } from 'next/headers';
 import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
+import { analyticsService } from '@/lib/services/analytics';
 
 export async function GET(
     req: NextRequest,
@@ -52,6 +53,18 @@ export async function POST(
 
         const factStatements = project.research.facts.map(f => f.statement);
         const generated = await generateDocumentaryScript(project.title, factStatements, project.estimatedDuration / 60, envMode);
+
+        // Track Usage
+        await analyticsService.logUsage({
+            service: 'vertex-ai',
+            operation: 'script-generation',
+            model: 'gemini-1.5-pro',
+            inputCount: factStatements.join(' ').length,
+            outputCount: generated.sections.reduce((acc, s) => acc + s.content.length, 0),
+            projectId,
+            userId: project.userId,
+            executionTimeMs: 15000 // Approximate for long scripts
+        }, envMode);
 
         // 3. Save Script to Firestore
         const totalWordCount = generated.sections.reduce((acc, s) => acc + s.wordCount, 0);

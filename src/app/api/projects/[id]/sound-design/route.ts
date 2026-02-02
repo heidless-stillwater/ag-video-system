@@ -3,6 +3,7 @@ import { getProject, getScript, updateProject, updateScript } from '@/lib/servic
 import { soundDesigner } from '@/lib/services/sound-designer';
 import { cookies } from 'next/headers';
 import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
+import { analyticsService } from '@/lib/services/analytics';
 
 export async function POST(
     req: NextRequest,
@@ -23,6 +24,17 @@ export async function POST(
 
         console.log(`[Sound Design API] Generating for project: ${projectId}`);
         const design = await soundDesigner.generateSoundDesign(script, envMode);
+
+        // Track Usage
+        await analyticsService.logUsage({
+            service: 'vertex-ai',
+            operation: 'script-generation', // Using this as proxy for Gemini analysis
+            model: 'gemini-1.5-flash',
+            inputCount: script.sections.reduce((acc, s) => acc + (s.content?.length || 0), 0),
+            projectId,
+            userId: project.userId,
+            executionTimeMs: 5000 // Approximate
+        }, envMode);
 
         // 1. Update Project Ambiance
         if (design.ambiance) {
