@@ -1,0 +1,136 @@
+# =============================================================================
+# --- Human Reference Docs (no agent value, exclude from indexing) ---
+docs/Skills/
+docs/Plans/ARCHIVE/
+
+# =====================================================s========================
+# .antigravityignore — Resource-Optimised Exclusion List
+# Blocks large/auto-generated directories to reduce indexer quota usage.
+# =============================================================================
+
+# --- Build & Compilation Output ---
+node_modules
+build
+dist
+.next
+.turbo
+out
+.cache
+.output
+.vercel
+.svelte-kit
+.nuxt
+
+# --- Next.js / TypeScript artefacts ---
+next-env.d.ts
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# --- Large lock / manifest files ---
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# --- Firebase / GCP ---
+.firebase
+.firebaserc
+firebase.json
+*.iml
+
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Test Results & Coverage ---
+coverage
+.nyc_output
+playwright-report
+test-results
+__snapshots__
+
+# --- Logs ---
+*.log
+*.log.*
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- IDE / Editor ---
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Binary / Media Assets (large) ---
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.mp3
+*.wav
+*.ogg
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.dmg
+*.iso
+*.wasm
+
+# --- Image files (usually don't need indexing) ---
+public/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.svg
+*.avif
+
+# --- Python ---
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# --- Git internals ---
+.git
+
+# --- Temporary / Debug scripts in root (project-specific) ---
+brute_force_models.ts
+check_auth.ts
+check_service.ts
+create-mock-user.ts
+debug_projects.ts
+debug_vertex.ts
+discover_models.ts
+find-project.ts
+list_locations.ts
+list_models_rest.ts
+test-research-local.ts
+test-tts.js
+test_sdk_simple.js
+test_vertex_models.ts
+tmp/
+
+# --- Misc ---
+.pnpm-store
+.yarn
+OLD-service-account.json-ORIG
+service-account.json
+*.pem
+*.key
+lifecycle-policy.json

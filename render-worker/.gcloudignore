@@ -1,0 +1,9 @@
+.gcloudignore
+.git
+.gitignore
+node_modules/
+dist/
+ts-node/
+*.log
+.env
+.ipynb_checkpoints/

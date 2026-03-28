@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --font-inter: "Inter", system-ui, sans-serif;
+  --accent: #6366f1;
+  --accent-secondary: #a855f7;
+  --card-bg: rgba(15, 23, 42, 0.4);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --header-font: normal;
+  --header-transform: none;
+}
+
+/* Theme: Modern SaaS (Default) */
+.theme-saas {
+  --background: #0a0a0b;
+  --accent: #6366f1;
+  --accent-secondary: #a855f7;
+  --card-bg: rgba(15, 23, 42, 0.5);
+}
+
+/* Theme: Intelligence (Intel) */
+.theme-intel {
+  --background: #050505;
+  --accent: #3b82f6;
+  --accent-secondary: #06b6d4;
+  --card-bg: rgba(10, 10, 10, 0.8);
+  --border-color: rgba(59, 130, 246, 0.2);
+  --header-font: italic;
+  --header-transform: uppercase;
+}
+
+/* Theme: Neon Cyber (Cyber) */
+.theme-cyber {
+  --background: #000000;
+  --accent: #10b981;
+  --accent-secondary: #059669;
+  --card-bg: rgba(0, 20, 0, 0.6);
+  --border-color: rgba(16, 185, 129, 0.3);
+}
+
+/* Theme: Midnight (Midnight) */
+.theme-midnight {
+  --background: #020617;
+  --accent: #334155;
+  --accent-secondary: #1e293b;
+  --card-bg: rgba(15, 23, 42, 0.3);
+}
+
+/* Theme: Pure Stealth (Stealth) */
+.theme-stealth {
+  --background: #020202;
+  --accent: #262626;
+  --accent-secondary: #171717;
+  --card-bg: rgba(23, 23, 23, 0.5);
+  --border-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Theme: Smart/Casual (Admin Tools Look) */
+.theme-smart-casual {
+  --background: #0f172a; /* Custom slate-900ish */
+  --accent: #2563eb;    /* blue-600 */
+  --accent-secondary: #4f46e5; /* indigo-600 */
+  --card-bg: rgba(30, 41, 59, 0.5); /* slate-800/50 */
+  --border-color: rgba(255, 255, 255, 0.1);
+  --header-font: normal;
+  --header-transform: none;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter);
+  transition: background-color 0.5s ease, color 0.5s ease;
+}
+
+.theme-header {
+  font-style: var(--header-font);
+  text-transform: var(--header-transform);
+}
+
+.theme-accent-text {
+  color: var(--accent);
+}
+
+.theme-card {
+  background: var(--card-bg);
+  border-color: var(--border-color);
+  backdrop-filter: blur(12px);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Smooth transitions */
+* {
+  transition-property: color, background-color, border-color, outline-color;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Animation utilities */
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); opacity: 0; }
+  50% { opacity: 0.5; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+@keyframes scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(400%); }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

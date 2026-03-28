@@ -1,0 +1,16 @@
+.gcloudignore
+.git
+.gitignore
+node_modules/
+.firebase/
+.next/
+tmp/
+public/renders/
+public/audio/
+
+# Explicitly include secrets (overriding .gitignore)
+!service-account.json
+!.env.local
+deploy-static/
+.next/
+.firebase/

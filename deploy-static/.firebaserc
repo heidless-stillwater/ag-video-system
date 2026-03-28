@@ -1,0 +1,20 @@
+{
+  "projects": {
+    "default": "heidless-apps-0"
+  },
+  "targets": {
+    "heidless-apps-0": {
+      "hosting": {
+        "autovideo": [
+          "videosystem-v0"
+        ]
+      },
+      "firestore": {
+        "autovideo": [
+          "autovideo-db-0"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

@@ -1,0 +1,34 @@
+# Firebase Hosting Ignore
+# This file tells Firebase which files to skip when uploading to Hosting.
+
+# Local Next.js cache
+.next/cache/
+
+# Local build artifacts
+dist/
+build/
+out/
+
+# Dependency management
+node_modules/
+.npm/
+
+# Environment and secrets
+.env*.local
+service-account.json
+
+# Tooling and logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+.vscode/
+.idea/
+.git/
+
+# Documentation and temporary files
+docs/
+tmp/
+tests/
+playwright-report/
+test-results/

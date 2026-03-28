@@ -1,0 +1,15 @@
+{
+    "hosting": {
+        "site": "videosystem-v0",
+        "public": ".",
+        "rewrites": [
+            {
+                "source": "**",
+                "run": {
+                    "serviceId": "videosystem-v0",
+                    "region": "us-central1"
+                }
+            }
+        ]
+    }
+}

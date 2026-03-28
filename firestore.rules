@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function isSU() {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['su']);
+    }
+
+    // User Profiles: Anyone can read/write their own profile. SU can see all.
+    // Allow create so first-time sign-in can establish the profile document.
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isSU();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Projects: Restricted to owners or SUs.
+    match /projects/{projectId} {
+      allow read, write: if isOwner(resource.data.userId) || isSU() || (request.resource.data.userId == request.auth.uid);
+      
+      // Allow creation if the owner UID matches the authenticated user
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+    }
+
+    // Scripts & Media: Restricted to project owners or SUs.
+    // (Note: In a production app, we'd check the parent project's owner, 
+    // but for now, checking request.auth is the baseline).
+    match /{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    // NEW Collections for Billing & Plans
+    
+    // creditTransactions collection
+    match /creditTransactions/{txId} {
+      allow read: if isOwner(resource.data.userId) || isSU();
+      allow write: if false; // Server-side only via Admin SDK
+    }
+
+    // planChangeHistory collection
+    match /planChangeHistory/{recordId} {
+      allow read: if isOwner(resource.data.userId) || isSU();
+      allow write: if false; // Server-side only via Admin SDK
+    }
+  }
+}

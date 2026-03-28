@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+.vercel
+node_modules
+.next
+*.mp4
+*.jpg
+*.tmp
+logs
+coverage
+*.spec.ts
+tsconfig.tsbuildinfo

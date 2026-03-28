@@ -1,0 +1,128 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - link "VideoSystem .ai" [ref=e4] [cursor=pointer]:
+        - /url: /
+      - navigation [ref=e5]:
+        - link "New Project" [ref=e6] [cursor=pointer]:
+          - /url: /projects/new
+        - link "Topics" [ref=e7] [cursor=pointer]:
+          - /url: /topics
+    - generic [ref=e8]:
+      - link "Admin Tools" [ref=e9] [cursor=pointer]:
+        - /url: /admin/tools
+        - img [ref=e10]
+      - link "System Health" [ref=e13] [cursor=pointer]:
+        - /url: /dashboard/health
+        - img [ref=e14]
+      - generic [ref=e17]:
+        - generic [ref=e18]: "Env:"
+        - combobox [ref=e19] [cursor=pointer]:
+          - option "DEV (Mock)"
+          - option "STAGING (Real AI)" [selected]
+          - option "STAGING (Limit AI)"
+          - option "PRODUCTION"
+      - button "Sign in with Google" [ref=e22]:
+        - img [ref=e23]
+        - text: Sign in with Google
+  - main [ref=e28]:
+    - generic [ref=e29]:
+      - generic [ref=e32]:
+        - generic [ref=e33]:
+          - generic [ref=e35]: 🎬
+          - generic [ref=e36]:
+            - heading "VideoSystem" [level=1] [ref=e37]
+            - paragraph [ref=e38]: Sleep Documentary Generator
+        - generic [ref=e39]:
+          - generic [ref=e40]:
+            - button "DEV" [ref=e41]
+            - button "STAGING" [ref=e42]
+            - button "LIMIT AI" [ref=e43]
+            - button "PRODUCTION" [ref=e44]
+          - link "System Health" [ref=e45] [cursor=pointer]:
+            - /url: /dashboard/health
+            - img [ref=e46]
+          - button "Sign in with Google" [ref=e48]:
+            - img [ref=e49]
+            - text: Sign in with Google
+      - main [ref=e54]:
+        - generic [ref=e56]:
+          - generic [ref=e57]:
+            - generic [ref=e59]: Staging (Real AI)
+            - generic [ref=e60]: • Real APIs, cheaper models (~$0.50/video)
+          - generic [ref=e61]:
+            - generic [ref=e62]: "Budget:"
+            - generic [ref=e65]: $12.50 / $300
+        - generic [ref=e66]:
+          - link "🔍 Research Topics Find viral-worthy documentary subjects with SEO analysis" [ref=e67] [cursor=pointer]:
+            - /url: /topics
+            - generic [ref=e68]: 🔍
+            - heading "Research Topics" [level=3] [ref=e69]
+            - paragraph [ref=e70]: Find viral-worthy documentary subjects with SEO analysis
+          - link "✨ New Project Start creating a new sleep documentary" [ref=e71] [cursor=pointer]:
+            - /url: /projects/new
+            - generic [ref=e72]: ✨
+            - heading "New Project" [level=3] [ref=e73]
+            - paragraph [ref=e74]: Start creating a new sleep documentary
+          - link "⚙️ Settings Configure APIs, voice settings, and preferences" [ref=e75] [cursor=pointer]:
+            - /url: /settings
+            - generic [ref=e76]: ⚙️
+            - heading "Settings" [level=3] [ref=e77]
+            - paragraph [ref=e78]: Configure APIs, voice settings, and preferences
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - generic [ref=e81]:
+              - generic [ref=e82]: 📁
+              - generic [ref=e83]: Projects
+            - paragraph [ref=e84]: "0"
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - generic [ref=e87]: 🎥
+              - generic [ref=e88]: Published
+            - paragraph [ref=e89]: "0"
+          - generic [ref=e90]:
+            - generic [ref=e91]:
+              - generic [ref=e92]: 👁️
+              - generic [ref=e93]: Total Views
+            - paragraph [ref=e94]: "0"
+          - generic [ref=e95]:
+            - generic [ref=e96]:
+              - generic [ref=e97]: ⏱️
+              - generic [ref=e98]: Watch Time
+            - paragraph [ref=e99]: 0h
+        - generic [ref=e100]:
+          - generic [ref=e101]:
+            - heading "Recent Projects" [level=2] [ref=e102]
+            - link "View all →" [ref=e103] [cursor=pointer]:
+              - /url: /projects
+          - generic [ref=e105]:
+            - generic [ref=e106]: 📁
+            - paragraph [ref=e107]: No projects yet. Start by researching a topic!
+            - link "🔍 Research Topics" [ref=e108] [cursor=pointer]:
+              - /url: /topics
+        - generic [ref=e109]:
+          - heading "😴 Sleep-Optimized Content Guidelines" [level=3] [ref=e110]
+          - generic [ref=e111]:
+            - generic [ref=e112]:
+              - generic [ref=e113]: Pacing
+              - generic [ref=e114]: 120-140 WPM
+              - generic [ref=e115]: Slow, measured delivery
+            - generic [ref=e116]:
+              - generic [ref=e117]: Voice
+              - generic [ref=e118]: Low, calm tones
+              - generic [ref=e119]: Consistent volume
+            - generic [ref=e120]:
+              - generic [ref=e121]: Visuals
+              - generic [ref=e122]: Slow transitions
+              - generic [ref=e123]: Muted colors
+            - generic [ref=e124]:
+              - generic [ref=e125]: Music
+              - generic [ref=e126]: 60-80 BPM
+              - generic [ref=e127]: Ambient, low-frequency
+  - button "Open Next.js Dev Tools" [ref=e133] [cursor=pointer]:
+    - img [ref=e134]
+  - alert [ref=e137]
+```
