@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { X, User as UserIcon, Shield, CreditCard, ArrowRight, History, Plus, Settings, RefreshCw, AlertCircle, CheckCircle } from 'lucide-react';
 import { User, CreditTransaction, PlanChangeRecord, UserPlan } from '@/types';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import { TransactionTable } from '../../billing/TransactionTable';
 import { ConfirmationModal } from '../../common/ConfirmationModal';
 
@@ -85,13 +86,7 @@ export const CreditUserDrilldown: React.FC<CreditUserDrilldownProps> = ({
             <div className="relative w-full max-w-2xl h-full bg-slate-950 border-l border-slate-800 shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-500">
                 <div className="sticky top-0 z-10 bg-slate-950/80 backdrop-blur-md border-b border-slate-800 p-8 flex justify-between items-center">
                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden">
-                             {user.photoURL ? (
-                                <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" />
-                            ) : (
-                                <UserIcon className="w-6 h-6 text-slate-500" />
-                            )}
-                        </div>
+                        <UserAvatar user={user} size="md" className="rounded-2xl" />
                         <div>
                             <h3 className="text-2xl font-black text-white uppercase tracking-tight">{user.displayName}</h3>
                             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{user.id}</p>

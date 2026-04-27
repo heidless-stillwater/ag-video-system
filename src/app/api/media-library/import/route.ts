@@ -17,37 +17,69 @@ export async function POST(req: NextRequest) {
         const userId = decodedToken.uid;
 
         const body = await req.json();
-        const { ptImageId } = body;
+        const { ptImageId, ptResourceId } = body;
         
-        if (!ptImageId) return NextResponse.json({ error: 'PromptTool Image ID required' }, { status: 400 });
-
-        // 1. Fetch from PromptTool
-        const ptResult = await PromptToolBridgeService.getImageById(ptImageId);
-        if (!ptResult.success || !ptResult.data) {
-            return NextResponse.json({ error: ptResult.error || 'Source image not found in PromptTool' }, { status: 404 });
+        if (!ptImageId && !ptResourceId) {
+            return NextResponse.json({ error: 'Source ID (image or resource) required' }, { status: 400 });
         }
 
-        const img = ptResult.data;
+        let entry: Omit<MediaLibraryEntry, 'id' | 'createdAt' | 'updatedAt'>;
 
-        // 2. Prepare local entry
-        const entry: Omit<MediaLibraryEntry, 'id' | 'createdAt' | 'updatedAt'> = {
-            userId,
-            type: (img.settings.modality as MediaAssetType) || 'image',
-            source: 'prompt-tool',
-            url: img.imageUrl,
-            thumbnailUrl: img.imageUrl,
-            prompt: img.prompt,
-            projectId: img.promptSetID,
-            sectionId: undefined,
-            metadata: {
-                aspectRatio: img.settings.aspectRatio,
-                style: img.settings.promptSetName,
-                engine: img.settings.modelType || 'standard',
-                ptOriginId: img.id
-            },
-            tags: img.tags || ['imported-from-prompttool'],
-            isFavorite: false,
-        };
+        if (ptImageId) {
+            // --- Import IMAGE ---
+            const ptResult = await PromptToolBridgeService.getImageById(ptImageId);
+            if (!ptResult.success || !ptResult.data) {
+                return NextResponse.json({ error: ptResult.error || 'Source image not found in PromptTool' }, { status: 404 });
+            }
+
+            const img = ptResult.data;
+            entry = {
+                userId,
+                type: (img.settings.modality as MediaAssetType) || 'image',
+                source: 'prompt-tool',
+                url: img.imageUrl,
+                thumbnailUrl: img.imageUrl,
+                prompt: img.prompt,
+                projectId: img.promptSetID,
+                metadata: {
+                    aspectRatio: img.settings.aspectRatio,
+                    style: img.settings.promptSetName,
+                    engine: img.settings.modelType || 'standard',
+                    ptOriginId: img.id
+                },
+                tags: img.tags || ['imported-from-prompttool'],
+                isFavorite: false,
+            };
+        } else {
+            // --- Import RESOURCE ---
+            const resResult = await PromptToolBridgeService.getResourceById(ptResourceId);
+            if (!resResult.success || !resResult.data) {
+                return NextResponse.json({ error: resResult.error || 'Source resource not found' }, { status: 404 });
+            }
+
+            const res = resResult.data;
+            let thumbUrl = res.thumbnailUrl;
+            if (!thumbUrl && res.mediaFormat === 'youtube' && res.youtubeVideoId) {
+                thumbUrl = `https://img.youtube.com/vi/${res.youtubeVideoId}/mqdefault.jpg`;
+            }
+
+            entry = {
+                userId,
+                type: 'article',
+                source: 'prompt-tool',
+                url: res.url || '',
+                thumbnailUrl: thumbUrl || '/placeholders/doc-thumbnail.svg',
+                prompt: res.title,
+                projectId: res.id,
+                metadata: {
+                    title: res.title,
+                    description: res.description,
+                    ptOriginId: res.id
+                },
+                tags: res.tags || ['imported-from-promptresources'],
+                isFavorite: false,
+            };
+        }
 
         // 3. Save to VideoSystem using SERVER SERVICE
         const entryId = await mediaLibraryServerService.addEntry(entry);

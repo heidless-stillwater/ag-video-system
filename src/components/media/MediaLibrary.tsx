@@ -20,7 +20,8 @@ import {
     RefreshCw,
     X,
     CheckCircle2,
-    Check
+    Check,
+    FileText
 } from 'lucide-react';
 import { MediaLibraryEntry } from '@/types';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -111,7 +112,10 @@ export const MediaLibrary: React.FC = () => {
             const res = await authFetch('/api/media-library/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ptImageId: entry.metadata.ptOriginId })
+                body: JSON.stringify({ 
+                    ptImageId: entry.type === 'article' ? undefined : entry.metadata.ptOriginId,
+                    ptResourceId: entry.type === 'article' ? entry.metadata.ptOriginId : undefined
+                })
             });
             
             if (res.ok) {
@@ -194,7 +198,7 @@ export const MediaLibrary: React.FC = () => {
             <div className="border-b border-slate-800 bg-slate-900/30">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        {['all', 'image', 'video'].map(type => (
+                        {['all', 'image', 'video', 'article'].map(type => (
                             <button
                                 key={type}
                                 onClick={() => setFilterType(type)}
@@ -358,7 +362,7 @@ const MediaItem: React.FC<MediaItemProps> = ({ entry, viewMode, onSelect, onTogg
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium text-slate-500 flex items-center gap-1 uppercase tracking-wider">
-                            {entry.type === 'image' ? <ImageIcon className="w-3 h-3" /> : <Film className="w-3 h-3" />}
+                            {entry.type === 'image' ? <ImageIcon className="w-3 h-3" /> : entry.type === 'video' ? <Film className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
                             {entry.type}
                         </span>
                         <span className="text-[10px] text-slate-600">•</span>
@@ -448,7 +452,8 @@ const MediaItem: React.FC<MediaItemProps> = ({ entry, viewMode, onSelect, onTogg
 
                 <div className="absolute bottom-3 left-3 right-3 z-10">
                     <div className="flex items-center gap-2 mb-1.5">
-                         <span className="text-[9px] font-bold text-slate-400 px-1.5 py-0.5 bg-slate-900/60 backdrop-blur-md rounded border border-slate-700 uppercase tracking-tighter">
+                         <span className="text-[9px] font-bold text-slate-400 px-1.5 py-0.5 bg-slate-900/60 backdrop-blur-md rounded border border-slate-700 uppercase tracking-tighter flex items-center gap-1">
+                            {entry.type === 'article' ? <FileText className="w-2 h-2" /> : entry.type === 'video' ? <Film className="w-2 h-2" /> : <ImageIcon className="w-2 h-2" />}
                             {entry.type}
                         </span>
                         {entry.metadata?.aspectRatio && (
@@ -503,7 +508,7 @@ const EntryDetails: React.FC<{
                         />
                     ) : (
                         <img 
-                            src={entry.url} 
+                            src={entry.type === 'article' ? (entry.thumbnailUrl || entry.url) : entry.url} 
                             className="max-w-full max-h-full object-contain"
                             alt={entry.prompt}
                         />
@@ -523,7 +528,8 @@ const EntryDetails: React.FC<{
                             rel="noreferrer"
                             className="bg-white text-black px-6 py-2.5 rounded-full text-sm font-bold flex items-center gap-2 hover:bg-slate-200 transition-colors shadow-xl"
                         >
-                            <Download className="w-4 h-4" /> Download Original
+                            {entry.type === 'article' ? <ExternalLink className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                            {entry.type === 'article' ? 'Open Resource' : 'Download Original'}
                         </a>
                     </div>
                 </div>

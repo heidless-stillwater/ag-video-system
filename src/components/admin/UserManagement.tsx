@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { userService } from '@/lib/services/firestore';
 import { User, UserRole } from '@/types';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { UserAvatar } from '@/components/common/UserAvatar';
 
 export function UserManagement() {
     const { user: currentUser, authFetch } = useAuth();
@@ -128,11 +129,7 @@ export function UserManagement() {
                             <tr key={targetUser.id} className="group hover:bg-white/[0.02] transition-colors">
                                 <td className="px-4 py-4">
                                     <div className="flex items-center gap-3">
-                                        {targetUser.photoURL ? (
-                                            <img src={targetUser.photoURL} alt="" className="w-8 h-8 rounded-full" />
-                                        ) : (
-                                            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center">👤</div>
-                                        )}
+                                        <UserAvatar user={targetUser} size="sm" />
                                         <div>
                                             <div className="font-bold text-white leading-none mb-1">{targetUser.displayName}</div>
                                             <div className="text-[10px] text-slate-500 font-mono italic">{targetUser.email}</div>

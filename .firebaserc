@@ -5,7 +5,7 @@
   "targets": {
     "heidless-apps-0": {
       "hosting": {
-        "autovideo": [
+        "videosystem-v0": [
           "videosystem-v0"
         ]
       },

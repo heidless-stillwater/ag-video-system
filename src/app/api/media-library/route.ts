@@ -11,6 +11,26 @@ import { auth } from '@/lib/firebase-admin';
  */
 export async function GET(req: NextRequest) {
     try {
+        const { searchParams } = new URL(req.url);
+        const type = searchParams.get('type') || undefined;
+        const mode = searchParams.get('mode');
+        const includePromptTool = searchParams.get('includePromptTool') !== 'false';
+
+        // PUBLIC MODES: Community Highlights do not require auth
+        if (mode === 'community') {
+            if (type === 'article') {
+                const result = await PromptToolBridgeService.getCommunityResources();
+                const entries = (result.data || []).map((res: any) => mapPTResourceToEntry('public-user', res));
+                return NextResponse.json({ success: true, data: entries });
+            }
+            
+            // Default to images (highlights)
+            const result = await PromptToolBridgeService.getCommunityHighlights();
+            const entries = (result.data || []).map((img: any) => mapPTImageToEntry('public-user', img));
+            return NextResponse.json({ success: true, data: entries });
+        }
+
+        // PRIVATE MODE: Requires Auth
         const idToken = req.headers.get('Authorization')?.split('Bearer ')[1];
         if (!idToken) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -19,48 +39,73 @@ export async function GET(req: NextRequest) {
         const decodedToken = await auth.verifyIdToken(idToken);
         const userId = decodedToken.uid;
 
-        const { searchParams } = new URL(req.url);
-        const type = searchParams.get('type') || undefined;
-        const mode = searchParams.get('mode');
-        const includePromptTool = searchParams.get('includePromptTool') !== 'false';
-
-        if (mode === 'community') {
-            const result = await PromptToolBridgeService.getCommunityHighlights(type as any);
-            const entries = (result.data || []).map((img: any) => mapPTImageToEntry(userId, img));
-            return NextResponse.json({ success: true, data: entries });
-        }
-
         // 1. Fetch local entries using SERVER SERVICE
         const localEntries = await mediaLibraryServerService.getUserEntries(userId, { type: type as any });
 
         // 2. Fetch PromptTool entries if requested
         let ptEntries: MediaLibraryEntry[] = [];
-        if (includePromptTool && (!type || type === 'image')) {
-            const ptResult = await PromptToolBridgeService.getImagesByUser(userId, 50);
-            if (ptResult.success && ptResult.data) {
-                // Deduplicate: Don't show PT images that were already imported (logically replaced by local entry)
-                const importedPTIds = new Set(localEntries
-                    .filter(e => e.metadata?.ptOriginId)
-                    .map(e => e.metadata?.ptOriginId)
-                );
-                
-                ptEntries = ptResult.data
-                    .filter(img => !importedPTIds.has(img.id))
-                    .map(img => mapPTImageToEntry(userId, img));
+        if (includePromptTool) {
+            // A. Fetch Images (default for 'all' or explicit 'image')
+            if (!type || type === 'image') {
+                const ptResult = await PromptToolBridgeService.getImagesByUser(userId, 50);
+                if (ptResult.success && ptResult.data) {
+                    const importedPTIds = new Set(localEntries
+                        .filter(e => e.metadata?.ptOriginId)
+                        .map(e => e.metadata?.ptOriginId)
+                    );
+                    
+                    const images = ptResult.data
+                        .filter(img => !importedPTIds.has(img.id))
+                        .map(img => mapPTImageToEntry(userId, img));
+                    ptEntries = [...ptEntries, ...images];
+                }
+            }
+
+            // B. Fetch Resources (default for 'all' or explicit 'article')
+            if (!type || type === 'article') {
+                const resResult = await PromptToolBridgeService.getUserResources(userId, 50);
+                if (resResult.success && resResult.data) {
+                    const importedResIds = new Set(localEntries
+                        .filter(e => e.metadata?.ptOriginId)
+                        .map(e => e.metadata?.ptOriginId)
+                    );
+
+                    const resources = resResult.data
+                        .filter(res => !importedResIds.has(res.id))
+                        .map(res => mapPTResourceToEntry(userId, res));
+                    ptEntries = [...ptEntries, ...resources];
+                }
             }
         }
 
-        // 3. Merge and Sort
-        const allEntries = [...localEntries, ...ptEntries].sort((a, b) => {
+        // 3. Deduplicate by Title (Bridge results often contain multiple drafts)
+        const uniqueByTitle = new Map<string, MediaLibraryEntry>();
+        
+        // We iterate through allEntries and keep the first one 
+        // because we'll sort them by date in the next step.
+        // Actually, let's sort FIRST, then deduplicate to keep the NEWEST.
+        
+        const mergedEntries = [...localEntries, ...ptEntries].sort((a, b) => {
             const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
             const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
             return dateB.getTime() - dateA.getTime();
         });
 
+        const finalEntries: MediaLibraryEntry[] = [];
+        const seenTitles = new Set<string>();
+
+        for (const entry of mergedEntries) {
+            const title = entry.prompt || entry.metadata?.title || entry.id;
+            if (!seenTitles.has(title)) {
+                seenTitles.add(title);
+                finalEntries.push(entry);
+            }
+        }
+
         return NextResponse.json({ 
             success: true, 
-            data: allEntries,
-            count: allEntries.length 
+            data: finalEntries,
+            count: finalEntries.length 
         });
 
     } catch (err: any) {
@@ -123,5 +168,38 @@ function mapPTImageToEntry(userId: string, img: PTImage): MediaLibraryEntry {
         isFavorite: false,
         createdAt: img.createdAt.toDate(),
         updatedAt: img.createdAt.toDate()
+    };
+}
+
+/**
+ * Maps a PromptResources PTResource to a VideoSystem MediaLibraryEntry.
+ */
+function mapPTResourceToEntry(userId: string, res: any): MediaLibraryEntry {
+    // Auto-generate YouTube thumbnail if possible
+    let thumbUrl = res.thumbnailUrl;
+    if (!thumbUrl && res.mediaFormat === 'youtube' && res.youtubeVideoId) {
+        thumbUrl = `https://img.youtube.com/vi/${res.youtubeVideoId}/mqdefault.jpg`;
+    }
+
+    return {
+        id: `res-${res.id}`,
+        userId,
+        type: 'article',
+        source: 'prompt-tool',
+        url: res.url || '',
+        thumbnailUrl: thumbUrl || '/placeholders/doc-thumbnail.svg',
+        prompt: res.title,
+        projectId: res.id,
+        metadata: {
+            title: res.title,
+            description: res.description,
+            type: res.type,
+            ptOriginId: res.id,
+            database: '(default)'
+        },
+        tags: res.tags || ['imported-from-promptresources'],
+        isFavorite: false,
+        createdAt: res.createdAt.toDate(),
+        updatedAt: res.updatedAt.toDate()
     };
 }

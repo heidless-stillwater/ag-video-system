@@ -1,94 +1,84 @@
-/**
- * POST /api/auth/sync-user
- *
- * Called after a user signs in to video-system.
- * Checks if a matching profile exists in prompttool-db-0 and creates one if not.
- *
- * Role Mapping (per design spec):
- *   video-system 'su'    → promptTool 'su'
- *   video-system 'admin' → promptTool 'admin'
- *   video-system 'user'  → promptTool 'member' (default)
- */
-
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/auth/roleMiddleware';
-import { db } from '@/lib/firebase-admin';
-import { promptToolDb } from '@/lib/firebase-prompttool-db';
+import { db, identityDb } from '@/lib/firebase-admin';
+import { User, UserRole, UserPlan } from '@/types';
 
-// Role mapping: video-system → promptTool
-function mapRoleToPromptTool(roles: string[]): string {
-    if (roles.includes('su')) return 'su';
-    if (roles.includes('admin')) return 'admin';
-    return 'member';
-}
-
+/**
+ * POST /api/auth/sync-user
+ * 
+ * SOVEREIGN IDENTITY SYNC (VideoSystem Node)
+ * 
+ * 1. Probes prompttool-db-0 (Identity Hub) for suite-wide profile/roles.
+ * 2. Merges identity data into autovideo-db-0 (Local App Store).
+ * 3. Normalizes roles and subscriptions to ensure suite-wide consistency.
+ */
 export async function POST(request: NextRequest) {
     try {
-        // 1. Authenticate the calling user
         const ctx = await verifyAuth(request);
-        if (!ctx) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+        const { userId, email } = ctx;
+
+        // 1. Fetch from Identity Hub (PromptTool)
+        const identitySnap = await identityDb.collection('users').doc(userId).get();
+        const identityData = identitySnap.exists ? identitySnap.data() : null;
+
+        // 2. Fetch from Local Store (VideoSystem)
+        const localSnap = await db.collection('users').doc(userId).get();
+        const localData = localSnap.exists ? localSnap.data() as User : null;
+
+        // 3. Resolve Identity & Roles
+        // We trust the Identity Hub for core roles, but VideoSystem might have elevated local roles.
+        let finalRoles: UserRole[] = localData?.roles || ['user'];
+        
+        if (identityData) {
+            // Map Identity Hub roles ('su', 'admin', 'member') to VideoSystem roles ('su', 'admin', 'user')
+            const idRole = identityData.role || identityData.actingAs;
+            if (idRole === 'su') finalRoles = ['su', 'admin'];
+            else if (idRole === 'admin' && !finalRoles.includes('admin')) finalRoles = ['admin'];
+            
+            // Sync subscription status if available
+            // Note: VideoSystem uses its own Plan types, but we can map 'pro' status.
         }
 
-        const { userId } = ctx;
-
-        // 2. Fetch the user's full profile from video-system (autovideo-db-0)
-        const vsUserRef = db.collection('users').doc(userId);
-        const vsUserSnap = await vsUserRef.get();
-
-        if (!vsUserSnap.exists) {
-            return NextResponse.json(
-                { error: 'User profile not found in video-system.' },
-                { status: 404 }
-            );
-        }
-
-        const vsUser = vsUserSnap.data()!;
-
-        // 3. Check if the user already exists in prompttool-db-0
-        const ptUserRef = promptToolDb.collection('users').doc(userId);
-        const ptUserSnap = await ptUserRef.get();
-
-        if (ptUserSnap.exists) {
-            // User already synced — nothing to do
-            return NextResponse.json(
-                { message: 'User already synced.', synced: false },
-                { status: 200 }
-            );
-        }
-
-        // 4. Map video-system role → promptTool role
-        const vsRoles: string[] = vsUser.roles || ['user'];
-        const ptRole = mapRoleToPromptTool(vsRoles);
-
-        // 5. Create the PromptTool user profile
-        const ptUserProfile = {
-            uid: userId,
-            email: vsUser.email || ctx.email || '',
-            displayName: vsUser.displayName || '',
-            photoURL: vsUser.photoURL || null,
-            role: ptRole,
-            plan: 'trial', // Default plan; PromptTool admins can upgrade
-            creditBalance: 0,
-            createdAt: new Date(),
-            syncedFrom: 'video-system',
-            syncedAt: new Date(),
+        // 4. Update Local Store
+        const now = new Date();
+        const updatedUser: Partial<User> = {
+            id: userId,
+            email: email || localData?.email || identityData?.email || '',
+            displayName: localData?.displayName || identityData?.displayName || identityData?.username || 'Sovereign User',
+            photoURL: localData?.photoURL || identityData?.photoURL || null,
+            roles: finalRoles,
+            updatedAt: now,
         };
 
-        await ptUserRef.set(ptUserProfile);
+        // Initialize new user if they don't exist locally
+        if (!localData) {
+            const newUser: User = {
+                ...updatedUser as User,
+                createdAt: now,
+                plan: 'standard', // Default for new suite members in this app
+                creditBalance: 10,  // Welcome bonus
+                settings: {
+                    defaultMode: 'DEV',
+                    notifications: true,
+                    autoSave: true,
+                    youtubeConnected: false
+                }
+            };
+            await db.collection('users').doc(userId).set(newUser);
+        } else {
+            await db.collection('users').doc(userId).update(updatedUser);
+        }
 
-        console.log(`[sync-user] Created PromptTool profile for uid: ${userId} with role: ${ptRole}`);
-
-        return NextResponse.json(
-            { message: 'User synced to PromptTool successfully.', synced: true, role: ptRole },
-            { status: 201 }
-        );
+        return NextResponse.json({ 
+            success: true, 
+            message: 'Identity synchronized with Stillwater Hub',
+            roles: finalRoles 
+        });
 
     } catch (error: any) {
-        console.error('[sync-user] Error:', error);
-        return NextResponse.json(
-            { error: 'Internal server error during user sync.' },
-            { status: 500 }
-        );
+        console.error('[sync-user] Sovereign Sync Failure:', error);
+        return NextResponse.json({ error: 'Internal server error during identity sync' }, { status: 500 });
     }
 }

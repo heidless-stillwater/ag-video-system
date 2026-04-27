@@ -5,6 +5,9 @@ import { resourceGovernor } from '@/lib/services/resource-governor';
 import { generateThumbnailPrompt, generateImage, generateSEOMetadata } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
 import { EnvironmentMode, getEnvironmentMode } from '@/lib/config/environment';
+import { mediaLibraryServerService } from '@/lib/services/media-library-server';
+import { PromptToolBridgeService } from '@/lib/services/prompttool-bridge';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * API Route to generate "Viral Suite" assets (Thumbnail + SEO Metadata).
@@ -78,6 +81,44 @@ export async function POST(
             }
         } else {
             console.error(`[Viral Suite API] Unexpected image generation result type: ${typeof imageResult}`);
+        }
+
+        // 4b. AUTO-PUBLISH (Unified Logging)
+        try {
+            if (project?.userId && thumbnailUrl) {
+                await mediaLibraryServerService.logGeneratedAsset({
+                    userId: project.userId,
+                    type: 'image',
+                    url: thumbnailUrl,
+                    prompt: thumbPrompt,
+                    source: 'video-system',
+                    projectId,
+                    metadata: {
+                        aspectRatio: project.aspectRatio,
+                        style: project.visualStyle || 'cinematic',
+                        engine: project.synthesisEngine || 'nanobanana-2',
+                        isThumbnail: true
+                    }
+                });
+
+                await PromptToolBridgeService.saveImage(project.userId, {
+                    userId: project.userId,
+                    prompt: thumbPrompt,
+                    imageUrl: thumbnailUrl,
+                    storagePath: `thumbnails/${uuidv4()}.jpg`,
+                    creditsCost: 0,
+                    downloadCount: 0,
+                    settings: {
+                        modality: 'image',
+                        quality: 'standard',
+                        aspectRatio: (project.aspectRatio as any) || '16:9',
+                        prompt: thumbPrompt,
+                        modelType: project.synthesisEngine === 'nanobanana-pro' ? 'pro' : 'standard'
+                    }
+                });
+            }
+        } catch (logErr) {
+            console.warn('[Viral Suite API] Auto-publish failed:', logErr);
         }
 
         // 5. Persist to Firestore

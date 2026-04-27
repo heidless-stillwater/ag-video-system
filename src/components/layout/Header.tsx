@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth/AuthContext';
 import { RequireRole } from '@/components/auth/RequireRole';
 import { CreditBadge } from '@/components/billing/CreditBadge';
 import { ThemeSelector } from './ThemeSelector';
+import { SuiteSwitcher } from './SuiteSwitcher';
 
 interface HeaderProps {
     initialMode?: EnvironmentMode;
@@ -56,13 +57,19 @@ export const Header = ({ initialMode }: HeaderProps) => {
         }, 800);
     };
 
+    // Hide header on landing page for unauthenticated users
+    if (pathname === '/' && !user && !loading) {
+        return null;
+    }
+
     return (
-        <header className="fixed top-0 left-0 right-0 h-16 border-b border-white/5 backdrop-blur-xl bg-[var(--background)]/60 z-50 transition-colors duration-500">
+        <header className="fixed top-0 left-0 right-0 h-16 border-b border-white/5 backdrop-blur-xl bg-[var(--background)]/60 z-[90] transition-colors duration-500">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
                 <div className="flex items-center justify-between h-full">
                     
                     {/* Brand / Logo Area (Matches Dashboard style) */}
-                    <div className="flex items-center gap-8">
+                    <div className="flex items-center gap-6">
+                        <SuiteSwitcher />
                         <Link href="/" className="flex items-center gap-3 transition-opacity hover:opacity-90 group">
                             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform">
                                 <span className="text-xl">🎬</span>

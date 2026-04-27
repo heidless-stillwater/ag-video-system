@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { InlineConfirmButton } from '@/components/ui/InlineConfirmButton';
 import { AuthModal } from './AuthModal';
+import { UserAvatar } from '@/components/common/UserAvatar';
 
 export function AuthButton() {
     const { user, loading, signOut } = useAuth();
@@ -49,13 +50,11 @@ export function AuthButton() {
         return (
             <div className="flex items-center gap-4">
                 <Link href="/settings" className="flex items-center gap-2 group hover:opacity-80 transition-opacity">
-                    {user.photoURL && (
-                        <img
-                            src={user.photoURL}
-                            alt={user.displayName}
-                            className="w-8 h-8 rounded-full border border-blue-500/30 group-hover:border-blue-500 transition-colors"
-                        />
-                    )}
+                    <UserAvatar 
+                        user={user} 
+                        size="sm" 
+                        className="border border-blue-500/30 group-hover:border-blue-500 transition-colors" 
+                    />
                     <div className="hidden md:block">
                         <p className="text-sm font-medium text-white line-clamp-1 group-hover:text-blue-400 transition-colors">{user.displayName}</p>
                         {user.settings.youtubeConnected ? (

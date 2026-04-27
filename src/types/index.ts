@@ -110,6 +110,7 @@ export interface User {
     displayName: string;
     photoURL?: string | null;
     createdAt: Date;
+    updatedAt?: Date;
     settings: UserSettings;
     // Role & Plan fields
     roles: UserRole[];
@@ -382,7 +383,7 @@ export interface VisualCue {
 }
 
 // ===== Media Asset Types =====
-export type MediaAssetType = 'image' | 'video' | 'audio' | 'music';
+export type MediaAssetType = 'image' | 'video' | 'audio' | 'music' | 'article';
 export type MediaAssetStatus = 'pending' | 'generating' | 'ready' | 'failed';
 
 export interface MediaAsset {

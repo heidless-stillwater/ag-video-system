@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 
 interface LandingIncentiveProps {
     onAuthClick: (mode: 'login' | 'signup') => void;
@@ -8,51 +10,49 @@ interface LandingIncentiveProps {
 
 export function LandingIncentive({ onAuthClick }: LandingIncentiveProps) {
     return (
-        <section className="relative w-full py-32 bg-[#020617] overflow-hidden">
-             {/* Decorative Background Elements */}
-             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none"></div>
+        <section className="py-32 px-6 bg-[#0a0a0f]">
+            <div className="max-w-4xl mx-auto">
+                <div className="text-center mb-16 space-y-4">
+                    <h2 className="text-4xl md:text-6xl font-black uppercase tracking-tighter text-white">Member <span className="text-indigo-500">Privileges</span></h2>
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Join the collective and claim your starter kit</p>
+                </div>
 
-            <div className="container mx-auto px-6 relative z-10">
-                <div className="max-w-4xl mx-auto p-12 bg-gradient-to-br from-indigo-900/40 to-slate-900/40 border border-white/10 backdrop-blur-3xl rounded-[48px] shadow-2xl overflow-hidden relative group">
-                    {/* Animated Beam Effect */}
-                    <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-indigo-500 to-transparent animate-shimmer"></div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Standard Rewards */}
+                    <Card variant="glass" className="p-8 rounded-[2.5rem] border-white/5 bg-white/[0.01] transition-all hover:bg-white/[0.03]">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-2xl mb-6">🪙</div>
+                        <h3 className="text-lg font-black uppercase tracking-tight mb-2 text-white">Welcome Kit</h3>
+                        <p className="text-[10px] text-slate-400 font-medium mb-4">Start with 500 synthesis credits and a 24h Producer Pass to all premium assets.</p>
+                        <div className="h-1 w-8 bg-indigo-500 rounded-full" />
+                    </Card>
 
-                    <div className="flex flex-col md:flex-row items-center gap-10 text-center md:text-left">
-                        <div className="w-24 h-24 flex-shrink-0 bg-indigo-600/20 text-indigo-400 rounded-3xl flex items-center justify-center text-4xl shadow-xl shadow-indigo-500/10">
-                            🌟
-                        </div>
-                        <div className="flex-1 space-y-4">
-                            <h3 className="text-3xl md:text-3xl font-black uppercase tracking-tight text-white italic">
-                                UNLOCK THE ELITE <br />
-                                PERSONA LIBRARY.
-                            </h3>
-                            <p className="text-slate-400 font-medium leading-relaxed max-w-lg italic">
-                                Access our full studio roster for 7 days. Perfect your brand's voice with 
-                                Sara, Gary, and Paul — our master-tuned research agents.
-                            </p>
-                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black tracking-widest rounded-full uppercase">
-                                EARLY_ACCESS_PROTOCOL
-                            </div>
-                        </div>
-                        <button
-                            onClick={() => onAuthClick('signup')}
-                            className="px-10 py-5 bg-white text-indigo-950 font-black uppercase tracking-widest rounded-2xl hover:bg-slate-200 transition-all active:scale-95 text-xs shadow-2xl shadow-white/10"
-                        >
-                            START_FREE_SESSION
-                        </button>
-                    </div>
+                    {/* Knowledge Bounty */}
+                    <Card variant="glass" className="p-8 rounded-[2.5rem] border-indigo-500/20 bg-indigo-500/5 transition-all hover:scale-105 active:scale-95 cursor-pointer">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 flex items-center justify-center text-2xl mb-6">🚀</div>
+                        <h3 className="text-lg font-black uppercase tracking-tight mb-2 text-indigo-500">Curator Bounty</h3>
+                        <p className="text-[10px] text-white/70 font-medium mb-4">Earn 50 credits every time the community clones your narrative blueprints.</p>
+                        <div className="h-1 w-8 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+                    </Card>
+
+                    {/* Status */}
+                    <Card variant="glass" className="p-8 rounded-[2.5rem] border-white/5 bg-white/[0.01] transition-all hover:bg-white/[0.03]">
+                        <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center text-2xl mb-6">🎖️</div>
+                        <h3 className="text-lg font-black uppercase tracking-tight mb-2 text-white">Vanguard Status</h3>
+                        <p className="text-[10px] text-slate-400 font-medium mb-4">Expert contributors gain access to the Synthesis Badge and priority queue processing.</p>
+                        <div className="h-1 w-8 bg-purple-500 rounded-full" />
+                    </Card>
+                </div>
+
+                <div className="mt-16 text-center">
+                    <Button
+                        onClick={() => onAuthClick('signup')}
+                        size="lg"
+                        className="h-16 px-16 bg-white text-black hover:bg-slate-200 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-white/10 border-none"
+                    >
+                        Join the Collective
+                    </Button>
                 </div>
             </div>
-            
-            <style jsx>{`
-                @keyframes shimmer {
-                    0% { transform: translateX(-100%); }
-                    100% { transform: translateX(100%); }
-                }
-                .animate-shimmer {
-                    animation: shimmer 3s infinite linear;
-                }
-            `}</style>
         </section>
     );
 }

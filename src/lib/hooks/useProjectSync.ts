@@ -183,6 +183,7 @@ export const useProjectSync = ({
             unsubscribe = onSnapshot(doc(db, 'projects', projectId),
                 (snapshot) => {
                     if (snapshot.exists()) {
+                        console.log('[ProjectSync] Successfully synced project:', snapshot.id);
                         const data = { ...snapshot.data() as Project, id: snapshot.id };
                         setProject(prev => {
                             if (JSON.stringify(prev) !== JSON.stringify(data)) {
@@ -219,6 +220,7 @@ export const useProjectSync = ({
             (snapshot) => {
                 if (snapshot.exists()) {
                     const data = { ...snapshot.data() as Script, id: snapshot.id };
+                    console.log('[ScriptSync] Successfully synced script:', data.title || data.id);
                     setScript(prev => {
                         if (JSON.stringify(prev) !== JSON.stringify(data)) {
                             return data;

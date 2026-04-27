@@ -6,6 +6,7 @@ import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { RequireRole } from '@/components/auth/RequireRole';
 import { UserRole, UserPlan, DEFAULT_PLAN_NICKNAMES } from '@/types';
 import { BackupRestore } from '@/components/admin/BackupRestore';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import Link from 'next/link';
 
 function SettingsContent() {
@@ -101,13 +102,7 @@ function SettingsContent() {
                             <span className="text-blue-400">👤</span> User Profile
                         </h2>
                         <div className="flex items-start gap-6">
-                            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center text-4xl overflow-hidden border border-white/10 flex-shrink-0">
-                                {user?.photoURL ? (
-                                    <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" />
-                                ) : (
-                                    <span>👤</span>
-                                )}
-                            </div>
+                            <UserAvatar user={user} size="lg" className="rounded-2xl" />
                             <div className="flex-1">
                                 {isEditing ? (
                                     <div className="flex items-center gap-3 mb-2">

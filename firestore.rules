@@ -12,11 +12,11 @@ service cloud.firestore {
     
     function isSU() {
       return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['su']);
     }
 
     // User Profiles: Anyone can read/write their own profile. SU can see all.
-    // Allow create so first-time sign-in can establish the profile document.
     match /users/{userId} {
       allow read, write: if isOwner(userId) || isSU();
       allow create: if isSignedIn() && request.auth.uid == userId;
@@ -25,16 +25,48 @@ service cloud.firestore {
     // Projects: Restricted to owners or SUs.
     match /projects/{projectId} {
       allow read, write: if isOwner(resource.data.userId) || isSU() || (request.resource.data.userId == request.auth.uid);
-      
-      // Allow creation if the owner UID matches the authenticated user
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
     }
 
-    // Scripts & Media: Restricted to project owners or SUs.
-    // (Note: In a production app, we'd check the parent project's owner, 
-    // but for now, checking request.auth is the baseline).
-    match /{document=**} {
-      allow read, write: if isSignedIn();
+    // Scripts: Restricted to project owners or SUs.
+    match /scripts/{scriptId} {
+      // Allow read if the user is an SU or the owner of the script's project
+      allow read: if isSignedIn() && (
+        isSU() || 
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid
+      );
+      
+      // Allow write if the user is an SU or the owner of the project associated with the script
+      allow write: if isSignedIn() && (
+        isSU() || 
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid ||
+        (request.resource.data.projectId != null && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.userId == request.auth.uid)
+      );
+    }
+
+    // Media Assets: Restricted to project owners or SUs.
+    match /mediaAssets/{assetId} {
+      allow read: if isSignedIn() && (
+        isSU() || 
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid
+      );
+      allow write: if isSignedIn() && (
+        isSU() || 
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid ||
+        (request.resource.data.projectId != null && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.userId == request.auth.uid)
+      );
+    }
+
+    // Topics & Videos: Related to user activity
+    match /topics/{topicId} {
+      allow read, write: if isSignedIn() && (isSU() || isOwner(resource.data.userId) || request.resource.data.userId == request.auth.uid);
+    }
+
+    match /videos/{videoId} {
+      allow read, write: if isSignedIn() && (
+        isSU() || 
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid
+      );
     }
 
     // NEW Collections for Billing & Plans

@@ -16,6 +16,7 @@
  */
 
 import { promptToolDb } from '@/lib/firebase-prompttool-db';
+import { resourcesDb } from '@/lib/firebase-resources-db';
 import { FieldPath } from 'firebase-admin/firestore';
 
 // ── Types mirrored from PromptTool's types.ts ──────────────────────────────
@@ -69,6 +70,30 @@ export interface PTUserProfile {
     subscription: 'free' | 'standard' | 'pro';
 }
 
+// ── Resource Types (Mirrored from PromptResources) ─────────────────────────
+
+export type PTResourceType = 'video' | 'article' | 'tool' | 'course' | 'book' | 'tutorial' | 'other';
+export type PTMediaFormat = 'youtube' | 'webpage' | 'pdf' | 'image' | 'audio' | 'other';
+export type PTResourceStatus = 'published' | 'draft' | 'pending' | 'suggested';
+
+export interface PTResource {
+    id: string;
+    title: string;
+    description: string;
+    type: PTResourceType;
+    mediaFormat: PTMediaFormat;
+    url: string;
+    thumbnailUrl?: string;
+    categories: string[];
+    tags: string[];
+    addedBy: string; // The UID of the user who added it
+    createdAt: FirebaseFirestore.Timestamp;
+    updatedAt: FirebaseFirestore.Timestamp;
+    status: PTResourceStatus;
+    isFavorite?: boolean;
+    youtubeVideoId?: string;
+}
+
 // ── Query option types ─────────────────────────────────────────────────────
 
 export interface PTImageSearchOptions {
@@ -101,6 +126,7 @@ export class PromptToolBridgeService {
     private static readonly IMAGES_COLLECTION = 'images';
     private static readonly USERS_COLLECTION = 'users';
     private static readonly COMMUNITY_COLLECTION = 'leagueEntries'; // Changed from 'communityEntries' to match PromptTool DB
+    private static readonly RESOURCES_COLLECTION = 'resources';
     private static readonly DEFAULT_LIMIT = 20;
     private static readonly MAX_LIMIT = 100;
 
@@ -387,6 +413,74 @@ export class PromptToolBridgeService {
             return await this.saveImage(userId, clonedImage);
         } catch (err: any) {
             console.error('[PTBridge] cloneImage error:', err);
+            return { success: false, error: err.message };
+        }
+    }
+
+    /**
+     * Fetch all resources belonging to a PromptTool user.
+     * Includes research papers, scripts, and other text artifacts.
+     */
+    static async getUserResources(uid: string, limit = 50): Promise<PTBridgeResult<PTResource[]>> {
+        try {
+            const snap = await resourcesDb
+                .collection(this.RESOURCES_COLLECTION)
+                .where('addedBy', '==', uid)
+                .orderBy('createdAt', 'desc')
+                .limit(limit)
+                .get();
+
+            const resources = snap.docs.map(d => ({ id: d.id, ...d.data() } as PTResource));
+            return { success: true, data: resources, count: resources.length };
+        } catch (err: any) {
+            console.error('[PTBridge] getUserResources error:', err);
+            return { success: false, error: err.message };
+        }
+    }
+
+    /**
+     * Fetch a single resource from the PromptTool database.
+     */
+    static async getResourceById(resourceId: string): Promise<PTBridgeResult<PTResource>> {
+        try {
+            const snap = await resourcesDb
+                .collection(this.RESOURCES_COLLECTION)
+                .doc(resourceId)
+                .get();
+
+            if (!snap.exists) {
+                return { success: false, error: `Resource not found: ${resourceId}` };
+            }
+
+            return { success: true, data: { id: snap.id, ...snap.data() } as PTResource };
+        } catch (err: any) {
+            console.error('[PTBridge] getResourceById error:', err);
+            return { success: false, error: err.message };
+        }
+    }
+
+    /**
+     * Fetch the most recent publicly-published community resource artifacts.
+     * Includes research, YouTube videos, and documentation.
+     */
+    static async getCommunityResources(
+        limit = this.DEFAULT_LIMIT
+    ): Promise<PTBridgeResult<PTResource[]>> {
+        try {
+            const safeLimit = Math.min(limit, this.MAX_LIMIT);
+            const snap = await resourcesDb
+                .collection(this.RESOURCES_COLLECTION)
+                .where('status', '==', 'published')
+                .limit(safeLimit)
+                .get();
+
+            const resources = snap.docs
+                .map(d => ({ id: d.id, ...d.data() } as PTResource))
+                .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+                
+            return { success: true, data: resources, count: resources.length };
+        } catch (err: any) {
+            console.error('[PTBridge] getCommunityResources error:', err);
             return { success: false, error: err.message };
         }
     }

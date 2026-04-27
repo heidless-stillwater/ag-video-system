@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { RoleGuard } from '@/components/auth/RoleGuard';
 import { UserRole, UserPlan, DEFAULT_PLAN_NICKNAMES } from '@/types';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import Link from 'next/link';
 
 interface UserData {
@@ -173,13 +174,7 @@ function UserManagementContent() {
                                         <tr key={u.id} className="hover:bg-white/5 transition-colors">
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-3">
-                                                    {u.photoURL ? (
-                                                        <img src={u.photoURL} alt="" className="w-10 h-10 rounded-full" />
-                                                    ) : (
-                                                        <div className="w-10 h-10 rounded-full bg-slate-600 flex items-center justify-center text-white font-bold">
-                                                            {u.displayName.charAt(0).toUpperCase()}
-                                                        </div>
-                                                    )}
+                                                    <UserAvatar user={u as any} size="md" />
                                                     <div>
                                                         <p className="text-white font-medium">{u.displayName}</p>
                                                         <p className="text-slate-400 text-sm">{u.email}</p>

@@ -4,6 +4,9 @@ import { getConfig, EnvironmentMode, getEnvironmentMode } from '@/lib/config/env
 import { generateImage } from '@/lib/services/ai';
 import { storageService } from '@/lib/services/storage';
 import { getScript, updateScript, getProject } from '@/lib/services/firestore-admin';
+import { mediaLibraryServerService } from '@/lib/services/media-library-server';
+import { PromptToolBridgeService } from '@/lib/services/prompttool-bridge';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * API Route for regenerating a single visual cue image.
@@ -62,6 +65,45 @@ export async function POST(
             finalUrl += `?t=${Date.now()}`;
         } else {
             throw new Error('Unexpected image result type from AI service');
+        }
+
+        // 4b. AUTO-PUBLISH (Unified Logging)
+        try {
+            if (project?.userId) {
+                await mediaLibraryServerService.logGeneratedAsset({
+                    userId: project.userId,
+                    type: 'image',
+                    url: finalUrl,
+                    prompt: prompt,
+                    source: 'video-system',
+                    projectId,
+                    sectionId,
+                    metadata: {
+                        aspectRatio: project.aspectRatio,
+                        style: visualStyle,
+                        engine: project.synthesisEngine,
+                        isRegeneration: true
+                    }
+                });
+
+                await PromptToolBridgeService.saveImage(project.userId, {
+                    userId: project.userId,
+                    prompt: prompt,
+                    imageUrl: finalUrl,
+                    storagePath: `regenerated/${uuidv4()}.jpg`,
+                    creditsCost: 0,
+                    downloadCount: 0,
+                    settings: {
+                        modality: 'image',
+                        quality: 'standard',
+                        aspectRatio: (project.aspectRatio as any) || '16:9',
+                        prompt: prompt,
+                        modelType: project.synthesisEngine === 'nanobanana-pro' ? 'pro' : 'standard'
+                    }
+                });
+            }
+        } catch (logErr) {
+            console.warn('[Media Regeneration] Auto-publish failed:', logErr);
         }
 
         // 5. Update Script in Firestore

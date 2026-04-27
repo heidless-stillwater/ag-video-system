@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   keywords: ["youtube", "documentary", "sleep", "automation", "AI", "video generation"],
 };
 
+import { SovereignSentinel } from "@/components/compliance/SovereignSentinel";
+
 export default async function RootLayout({
   children,
 }: Readonly<{
@@ -36,6 +38,7 @@ export default async function RootLayout({
     <html lang="en" className={`dark theme-${themeFromCookie}`}>
       <body className={`${inter.variable} font-sans antialiased text-gray-200`}>
         <Providers initialTheme={themeFromCookie} initialMode={effectiveMode}>
+          <SovereignSentinel />
           <Header initialMode={effectiveMode} />
           <main className="pt-16 min-h-screen">
             {children}

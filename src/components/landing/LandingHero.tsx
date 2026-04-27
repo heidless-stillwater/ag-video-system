@@ -2,6 +2,9 @@
 
 import React from 'react';
 import Image from 'next/image';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Icons } from '@/components/ui/Icons';
 
 interface LandingHeroProps {
     onAuthClick: (mode: 'login' | 'signup') => void;
@@ -9,100 +12,110 @@ interface LandingHeroProps {
 
 export function LandingHero({ onAuthClick }: LandingHeroProps) {
     return (
-        <section className="relative w-full min-h-[100svh] lg:min-h-screen flex flex-col items-center justify-center pt-24 pb-12 overflow-hidden bg-[#020617] text-white">
-            {/* Background Glows */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] lg:w-[1000px] h-[600px] bg-indigo-600/10 rounded-full blur-[120px] pointer-events-none"></div>
-            <div className="absolute bottom-0 right-1/4 w-[300px] lg:w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[100px] pointer-events-none"></div>
+        <section className="relative min-h-screen flex flex-col items-center justify-center pt-32 pb-12 px-6 overflow-hidden bg-[#0a0a0f]">
+            {/* Background — replicates PromptTool hero treatment */}
+            <div className="absolute inset-0 z-0">
+                <Image
+                    src="/assets/landing/hero-anatomy.png"
+                    alt="Synthesis Engine Anatomy"
+                    fill
+                    className="object-cover opacity-20 mix-blend-luminosity scale-105"
+                    priority
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0f] via-transparent to-[#0a0a0f]" />
+            </div>
 
-            <div className="container mx-auto px-6 relative z-10 flex flex-col lg:flex-row items-center gap-12 lg:gap-20">
-                {/* Text Content */}
-                <div className="flex-1 text-center lg:text-left space-y-6 lg:space-y-8 animate-in fade-in slide-in-from-left-8 duration-1000">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 rounded-full">
-                        <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
-                        <span className="text-[10px] font-bold tracking-widest uppercase text-indigo-300">
-                            Synthesis Studio // v2.0 Live
-                        </span>
+            <div className="relative z-10 w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+                {/* Left Content */}
+                <div className="space-y-8 animate-in fade-in slide-in-from-left-8 duration-1000">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
+                        <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-foreground/70">Powered by Synthesis Core v4.2</span>
                     </div>
 
-                    <h1 className="text-4xl sm:text-5xl md:text-7xl xl:text-8xl font-black tracking-tighter leading-[0.95] lg:leading-[0.9] text-transparent bg-clip-text bg-gradient-to-br from-white via-white to-white/40">
-                        DEPLOY YOUR <br />
-                        <span className="theme-accent-text italic">NARRATIVE.</span>
+                    <h1 className="text-5xl md:text-8xl font-black uppercase tracking-tighter leading-[0.85] text-white">
+                        Deploy your <br />
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 via-purple-500 to-rose-500">Narrative</span>
                     </h1>
 
-                    <p className="text-base md:text-xl text-slate-400 font-medium max-w-2xl mx-auto lg:mx-0 leading-relaxed">
-                        The world's first data-driven documentary engine. Transform complex research into cinematic experiences 
-                        using custom-tuned Agent personas and frequency-optimized audio.
+                    <p className="text-lg md:text-xl text-slate-400 max-w-xl font-medium leading-relaxed">
+                        Transform complex research into cinematic sleep documentaries. Deploy custom-tuned agents, 
+                        frequency-optimized audio, and data-driven visuals at scale.
                     </p>
 
-                    <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 pt-4">
-                        <button
+                    <div className="flex flex-col sm:flex-row items-center gap-4 pt-4">
+                        <Button
                             onClick={() => onAuthClick('signup')}
-                            className="group relative w-full sm:w-auto px-10 py-5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all shadow-2xl shadow-indigo-500/20 active:scale-95 text-xs sm:text-sm overflow-hidden"
+                            size="lg"
+                            className="h-16 px-12 group relative overflow-hidden bg-indigo-600 hover:bg-indigo-500 rounded-2xl shadow-2xl shadow-indigo-500/20"
                         >
-                            <span className="relative z-10 flex items-center justify-center gap-2">
-                                START CREATING
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="group-hover:translate-x-1 transition-transform">
-                                    <path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                </svg>
+                            <span className="relative z-10 flex items-center gap-3 text-sm font-black uppercase tracking-widest">
+                                Start Your Mission
+                                <Icons.arrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                             </span>
-                        </button>
-                        <button
-                            onClick={() => {/* Scroll to demo */}}
-                            className="w-full sm:w-auto px-10 py-5 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold rounded-xl transition-all active:scale-95 text-xs sm:text-sm"
-                        >
-                            WATCH SIMULATION
-                        </button>
-                    </div>
-
-                    {/* Simple Trust Signal */}
-                    <div className="pt-8 flex flex-wrap items-center justify-center lg:justify-start gap-x-8 gap-y-4 opacity-30 grayscale contrast-125">
-                        <span className="text-[10px] font-black tracking-widest">STRIPEO_NET</span>
-                        <span className="text-[10px] font-black tracking-widest">FIREBASE_VAULT</span>
-                        <span className="text-[10px] font-black tracking-widest">VERTEX_ENGINE</span>
+                        </Button>
+                        <p className="text-[10px] uppercase font-black tracking-widest opacity-40 text-white">Researcher Friendly • Producer Driven</p>
                     </div>
                 </div>
 
-                {/* Hero Asset */}
-                <div className="flex-1 w-full max-w-lg lg:max-w-none animate-in fade-in slide-in-from-right-8 duration-1000 delay-200">
-                    <div className="relative aspect-square sm:aspect-video lg:aspect-square w-full">
-                        {/* Decorative Rings */}
-                        <div className="absolute inset-0 border border-white/5 rounded-full scale-110 animate-spin-slow pointer-events-none hidden lg:block"></div>
-                        
-                        {/* Main Image with Glassmorphism Wrapper */}
-                        <div className="relative w-full h-full rounded-[32px] lg:rounded-[40px] overflow-hidden border border-white/10 shadow-2xl p-2 bg-white/5 backdrop-blur-3xl">
-                             <Image 
-                                src="/assets/landing/hero.png" 
-                                alt="Synthesis Studio Narrative Engine" 
+                {/* Right: Anatomy Card */}
+                <div className="relative animate-in fade-in slide-in-from-right-8 duration-1000 delay-300">
+                    <Card variant="glass" className="p-8 rounded-[3rem] border-white/5 bg-white/[0.02] backdrop-blur-2xl shadow-2xl backdrop-glow">
+                        <div className="relative aspect-[4/3] rounded-2xl overflow-hidden mb-8 border border-white/10 shadow-lg group">
+                            <Image 
+                                src="/assets/landing/hero-anatomy.png" 
+                                alt="Engine Anatomy" 
                                 fill
-                                className="object-cover rounded-[24px] lg:rounded-[32px] opacity-90 transition-opacity hover:opacity-100"
                                 priority
+                                className="object-cover group-hover:scale-105 transition-transform duration-1000" 
                             />
+                            <div className="absolute inset-0 bg-indigo-500/10 group-hover:bg-transparent transition-colors duration-500" />
                         </div>
 
-                        {/* Floating Micro-UI labels */}
-                        <div className="absolute -top-3 -right-3 px-3 py-1.5 bg-indigo-600 text-[8px] sm:text-[10px] font-black tracking-widest rounded-lg shadow-xl animate-bounce-slow">
-                            STUDIO_CORE
-                        </div>
-                        <div className="absolute -bottom-4 -left-4 px-4 py-3 bg-white/5 border border-white/10 backdrop-blur-xl rounded-2xl shadow-2xl hidden sm:block">
-                            <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-emerald-500/20 rounded-full flex items-center justify-center">
-                                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+                        <div className="space-y-6">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Anatomy of a Synthesis</span>
+                                <div className="flex gap-1">
+                                    {[1, 2, 3].map(i => <div key={i} className="w-1.5 h-1.5 rounded-full bg-white/20" />)}
                                 </div>
-                                <div className="pr-2">
-                                    <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">Synthesis Engine</div>
-                                    <div className="text-[10px] font-bold tracking-tight">STUDIO_GRADE // 140 WPM</div>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="p-4 rounded-xl bg-[#0a0a0f]/80 border border-white/5 font-mono text-xs leading-relaxed group hover:border-indigo-500/50 transition-colors">
+                                    <p className="text-white/40 mb-1 font-bold uppercase tracking-tighter text-[9px]">Narrative Sequence</p>
+                                    <span className="text-indigo-400">Audio:</span> 140 WPM Synthesis, <span className="text-purple-400">Visuals:</span> 4K Procedural, <span className="text-rose-400">Duration:</span> 120min Optimized...
+                                </div>
+                                <div className="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/20 flex items-center justify-between group cursor-pointer hover:bg-indigo-500/10 transition-all">
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Simulation Status</p>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">&quot;Deep sleep induction protocols active&quot;</p>
+                                    </div>
+                                    <Icons.play className="text-indigo-500 w-4 h-4" />
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </Card>
+                    
+                    {/* Floating Decorative Elements */}
+                    <div className="absolute -top-6 -right-6 w-24 h-24 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
+                    <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
                 </div>
             </div>
-            
-            {/* Scroll Indicator */}
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 opacity-30 animate-bounce">
-                <div className="w-[1px] h-12 bg-gradient-to-b from-transparent to-white"></div>
-                <span className="text-[10px] font-bold tracking-widest rotate-90 origin-left mt-8">SCROLL</span>
-            </div>
+
+            <style jsx>{`
+                .backdrop-glow {
+                    position: relative;
+                }
+                .backdrop-glow::after {
+                    content: '';
+                    position: absolute;
+                    inset: -20px;
+                    background: radial-gradient(circle, rgba(99, 102, 241, 0.2) 0%, transparent 70%);
+                    opacity: 0.1;
+                    z-index: -1;
+                    filter: blur(40px);
+                }
+            `}</style>
         </section>
     );
 }

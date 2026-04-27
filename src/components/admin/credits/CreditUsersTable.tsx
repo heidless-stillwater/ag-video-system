@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Search, Filter, Shield, User as UserIcon, MoreVertical, CreditCard, ArrowRight } from 'lucide-react';
 import { User, UserPlan } from '@/types';
+import { UserAvatar } from '@/components/common/UserAvatar';
 
 interface CreditUsersTableProps {
     users: User[];
@@ -67,13 +68,7 @@ export const CreditUsersTable: React.FC<CreditUsersTableProps> = ({ users, onSel
                             >
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center overflow-hidden">
-                                            {user.photoURL ? (
-                                                <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" />
-                                            ) : (
-                                                <UserIcon className="w-5 h-5 text-slate-500" />
-                                            )}
-                                        </div>
+                                        <UserAvatar user={user} size="md" className="rounded-xl" />
                                         <div className="flex flex-col">
                                             <span className="text-sm font-bold text-white group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{user.displayName}</span>
                                             <span className="text-[10px] text-slate-500 font-medium">{user.email}</span>
