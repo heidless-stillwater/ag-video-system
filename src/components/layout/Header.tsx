@@ -75,7 +75,12 @@ export const Header = ({ initialMode }: HeaderProps) => {
                                 <span className="text-xl">🎬</span>
                             </div>
                             <div>
-                                <h1 className="text-xl font-bold text-white leading-none tracking-tight">VideoSystem</h1>
+                                <div className="flex items-center gap-2">
+                                    <h1 className="text-xl font-bold text-white leading-none tracking-tight">VideoSystem</h1>
+                                    <span className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 uppercase tracking-wider">
+                                        v0.1.0
+                                    </span>
+                                </div>
                                 <p className="text-[10px] text-slate-400 mt-1 font-medium tracking-tight uppercase">Sleep Documentary Generator</p>
                             </div>
                         </Link>

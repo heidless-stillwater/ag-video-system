@@ -19,7 +19,9 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Next.js build
+# Use the deployment-injected environment if available
+RUN if [ -f .env.deploy ]; then cp .env.deploy .env.production; fi
+
 RUN npm run build
 
 FROM base AS runner

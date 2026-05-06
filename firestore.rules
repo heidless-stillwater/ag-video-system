@@ -11,15 +11,21 @@ service cloud.firestore {
     }
     
     function isSU() {
-      return isSignedIn() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['su']);
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return isSignedIn() && (
+        (user.roles != null && user.roles.hasAny(['su'])) ||
+        (user.role != null && user.role == 'su')
+      );
     }
 
     // User Profiles: Anyone can read/write their own profile. SU can see all.
     match /users/{userId} {
       allow read, write: if isOwner(userId) || isSU();
       allow create: if isSignedIn() && request.auth.uid == userId;
+
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId) || isSU();
+      }
     }
 
     // Projects: Restricted to owners or SUs.
@@ -30,13 +36,10 @@ service cloud.firestore {
 
     // Scripts: Restricted to project owners or SUs.
     match /scripts/{scriptId} {
-      // Allow read if the user is an SU or the owner of the script's project
       allow read: if isSignedIn() && (
         isSU() || 
         get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid
       );
-      
-      // Allow write if the user is an SU or the owner of the project associated with the script
       allow write: if isSignedIn() && (
         isSU() || 
         get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.userId == request.auth.uid ||
@@ -69,18 +72,71 @@ service cloud.firestore {
       );
     }
 
-    // NEW Collections for Billing & Plans
-    
-    // creditTransactions collection
+    // Billing & Plans
     match /creditTransactions/{txId} {
       allow read: if isOwner(resource.data.userId) || isSU();
-      allow write: if false; // Server-side only via Admin SDK
+      allow write: if false; 
     }
 
-    // planChangeHistory collection
     match /planChangeHistory/{recordId} {
       allow read: if isOwner(resource.data.userId) || isSU();
-      allow write: if false; // Server-side only via Admin SDK
+      allow write: if false; 
+    }
+
+    // League Entries: Community Hub
+    match /leagueEntries/{entryId} {
+      allow read: if true;
+      allow write: if isSignedIn() && (isOwner(resource.data.originalUserId) || isSU());
+
+      match /{allSubcollections=**} {
+        allow read: if true;
+        allow write: if isSignedIn() && (isSU() || isOwner(get(/databases/$(database)/documents/leagueEntries/$(entryId)).data.originalUserId));
+      }
+    }
+
+    // Suites: Global application registry
+    match /suites/{suiteId} {
+      allow read: if isSignedIn();
+      allow write: if isSU();
+    }
+
+    // System Config: Global settings
+    match /system_config/{configId} {
+      allow read: if true; 
+      allow write: if isSU();
+    }
+
+    // Exemplars: Community Hub assets
+    match /exemplars/{exemplarId} {
+      allow read: if isSignedIn();
+      allow write: if isSU();
+    }
+
+    // Community Pulse: Real-time activity feed
+    match /community_pulse/{pulseId} {
+      allow read: if isSignedIn();
+      allow write: if isSU();
+    }
+
+    // Accreditation: Governance & Policies
+    match /policies/{policyId} {
+      allow read: if isSignedIn();
+      allow write: if isSU();
+    }
+
+    match /scan_results/{resultId} {
+      allow read: if isSignedIn() && (isSU() || resource.data.userId == request.auth.uid);
+      allow write: if isSU();
+    }
+
+    match /audit_log/{logId} {
+      allow read: if isSU();
+      allow write: if isSignedIn();
+    }
+
+    match /kb_documents/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isSU();
     }
   }
 }

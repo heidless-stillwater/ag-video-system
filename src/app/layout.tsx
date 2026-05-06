@@ -1,18 +1,24 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import pkg from "../../package.json";
+// import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Header } from "@/components/layout/Header";
 import { cookies } from "next/headers";
 import { EnvironmentMode, getEnvironmentMode } from "@/lib/config/environment";
 
+// Temporary system font fallbacks to bypass build-time network failures
+const inter = { variable: 'font-inter', className: 'font-inter' };
+
+/*
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
 });
+*/
 
 export const metadata: Metadata = {
-  title: "VideoSystem - Sleep Documentary Generator",
+  title: `VideoSystem v${pkg.version} | Sleep Documentary Generator`,
   description: "Automated research and generation of long-form YouTube documentaries designed for sleep",
   keywords: ["youtube", "documentary", "sleep", "automation", "AI", "video generation"],
 };

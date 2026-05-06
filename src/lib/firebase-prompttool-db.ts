@@ -10,21 +10,8 @@ import { admin } from './firebase-admin';
 
 let promptToolDb: Firestore;
 
-try {
-    const adminApp = admin.apps().find(a => a?.name === '[DEFAULT]') || admin.apps()[0];
-    if (!adminApp) {
-        throw new Error('[PromptTool Bridge] Firebase Admin app not initialized.');
-    }
-    // Specifying 'prompttool-db-0' reaches the dedicated image database
-    promptToolDb = getFirestore(adminApp, 'prompttool-db-0');
-    promptToolDb.settings({ ignoreUndefinedProperties: true });
-} catch (e: any) {
-    if (e.message?.includes('already been initialized')) {
-        const adminApp = admin.apps().find(a => a?.name === '[DEFAULT]') || admin.apps()[0];
-        promptToolDb = getFirestore(adminApp!, 'prompttool-db-0');
-    } else {
-        throw e;
-    }
-}
+const app = admin.app();
+promptToolDb = getFirestore(app, 'prompttool-db-0');
+promptToolDb.settings({ ignoreUndefinedProperties: true });
 
 export { promptToolDb };
